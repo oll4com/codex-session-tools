@@ -1,0 +1,456 @@
+{
+  "name": "codex-session-tools",
+  "displayName": "Codex Session Tools",
+  "description": "Provider switching, account rotation, Codex LB controls, and toolbar actions for Codex and Kilo.",
+  "version": "0.1.0",
+  "publisher": "oll4com",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oll4com/codex-session-tools.git"
+  },
+  "homepage": "https://github.com/oll4com/codex-session-tools",
+  "bugs": {
+    "url": "https://github.com/oll4com/codex-session-tools/issues"
+  },
+  "files": [
+    "extension.js",
+    "config-editor.js",
+    "README.md",
+    "PUBLISHING.md",
+    "LICENSE.md"
+  ],
+  "engines": {
+    "vscode": "^1.96.2"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codexProviderStatusbar.pickProvider",
+    "onCommand:codexProviderStatusbar.openQuickActions",
+    "onCommand:codexProviderStatusbar.logoutToBestAccount",
+    "onCommand:codexProviderStatusbar.loginWithSavedAccount",
+    "onCommand:codexProviderStatusbar.saveCurrentAuthSnapshot",
+    "onCommand:codexProviderStatusbar.showCurrentAndNextAccount",
+    "onCommand:codexProviderStatusbar.showCurrentRemainingMetrics",
+    "onCommand:codexProviderStatusbar.showDebugLog",
+    "onCommand:codexProviderStatusbar.reloadWindow",
+    "onCommand:codexProviderStatusbar.sendContinuePrompt",
+    "onCommand:codexProviderStatusbar.openVoiceDraft",
+    "onCommand:codexProviderStatusbar.openScreenClipTool",
+    "onCommand:codexProviderStatusbar.captureScreenToChat",
+    "onCommand:codexProviderStatusbar.showCodexLbStatus",
+    "onCommand:codexProviderStatusbar.showCodexLbUsage",
+    "onCommand:codexProviderStatusbar.refreshCodexLbUsage",
+    "onCommand:codexProviderStatusbar.refreshCodexLbModels",
+    "onCommand:codexProviderStatusbar.selectCodexLbRoute",
+    "onCommand:codexProviderStatusbar.openCodexLbDashboard",
+    "onCommand:codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt",
+    "onCommand:codexProviderStatusbar.openNextRemoteSession",
+    "onCommand:codexProviderStatusbar.openCodexSidebar",
+    "onCommand:codexProviderStatusbar.newCodexThread"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "keybindings": [
+      {
+        "command": "codexProviderStatusbar.pickProvider",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p"
+      },
+      {
+        "command": "codexProviderStatusbar.newCodexThread",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l"
+      },
+      {
+        "command": "codexProviderStatusbar.openCodexSidebar",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o"
+      }
+    ],
+    "commands": [
+      {
+        "command": "codexProviderStatusbar.openQuickActions",
+        "title": "Codex Session Tools: Open Quick Actions",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "codexProviderStatusbar.pickProvider",
+        "title": "Codex Session Tools: Switch Provider",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "codexProviderStatusbar.logoutToBestAccount",
+        "title": "Codex Session Tools: Logout To Best Account",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "codexProviderStatusbar.loginWithSavedAccount",
+        "title": "Codex Session Tools: Login With Saved Account",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "codexProviderStatusbar.saveCurrentAuthSnapshot",
+        "title": "Codex Session Tools: Save Current Auth Snapshot",
+        "icon": "$(save)"
+      },
+      {
+        "command": "codexProviderStatusbar.showCurrentAndNextAccount",
+        "title": "Codex Session Tools: Show Current/Next Account",
+        "icon": "$(account)"
+      },
+      {
+        "command": "codexProviderStatusbar.showCurrentRemainingMetrics",
+        "title": "Codex Session Tools: Show Current Remaining Metrics",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "codexProviderStatusbar.showDebugLog",
+        "title": "Codex Session Tools: Show Debug Log",
+        "icon": "$(output)"
+      },
+      {
+        "command": "codexProviderStatusbar.reloadWindow",
+        "title": "Codex Session Tools: Reload Window",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexProviderStatusbar.sendContinuePrompt",
+        "title": "Codex Session Tools: Send \"συνεχισε\"",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "codexProviderStatusbar.openVoiceDraft",
+        "title": "Codex Session Tools: Greek Voice Draft",
+        "icon": "$(mic)"
+      },
+      {
+        "command": "codexProviderStatusbar.openScreenClipTool",
+        "title": "Codex Session Tools: Open Screen Clip Tool",
+        "icon": "$(device-camera)"
+      },
+      {
+        "command": "codexProviderStatusbar.captureScreenToChat",
+        "title": "Codex Session Tools: Capture Screen To Chat",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "codexProviderStatusbar.showCodexLbStatus",
+        "title": "Codex Session Tools: Show Codex LB Status",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "codexProviderStatusbar.showCodexLbUsage",
+        "title": "Codex Session Tools: Show Codex LB Usage",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "codexProviderStatusbar.refreshCodexLbUsage",
+        "title": "Codex Session Tools: Refresh Codex LB Usage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexProviderStatusbar.refreshCodexLbModels",
+        "title": "Codex Session Tools: Refresh Codex LB Models",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexProviderStatusbar.selectCodexLbRoute",
+        "title": "Codex Session Tools: Select Codex LB Route",
+        "icon": "$(server)"
+      },
+      {
+        "command": "codexProviderStatusbar.openCodexLbDashboard",
+        "title": "Codex Session Tools: Open Codex LB Dashboard",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt",
+        "title": "Codex Session Tools: Low Reasoning + Save Memory",
+        "icon": "$(history)"
+      },
+      {
+        "command": "codexProviderStatusbar.openNewWindow",
+        "title": "Codex Session Tools: Open New VS Code Window",
+        "icon": "$(empty-window)"
+      },
+      {
+        "command": "codexProviderStatusbar.openNextRemoteSession",
+        "title": "Codex Session Tools: Open Next Remote Session Window",
+        "icon": "$(vm-connect)"
+      },
+      {
+        "command": "codexProviderStatusbar.openCodexSidebar",
+        "title": "Codex Session Tools: Open Codex Sidebar",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "codexProviderStatusbar.newCodexThread",
+        "title": "Codex Session Tools: New Codex Thread",
+        "icon": "$(plus)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexProviderStatusbar.openQuickActions",
+          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "codexProviderStatusbar.reloadWindow",
+          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProviderStatusbar.openScreenClipTool",
+          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexProviderStatusbar.openNextRemoteSession",
+          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codexProviderStatusbar.selectCodexLbRoute",
+          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+          "group": "navigation@4"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "codexProviderStatusbar.openQuickActions",
+          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+          "group": "navigation@0"
+        },
+        {
+          "command": "codexProviderStatusbar.reloadWindow",
+          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexProviderStatusbar.openScreenClipTool",
+          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codexProviderStatusbar.openNextRemoteSession",
+          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codexProviderStatusbar.selectCodexLbRoute",
+          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codexProviderStatusbar.openQuickActions"
+        },
+        {
+          "command": "codexProviderStatusbar.pickProvider"
+        },
+        {
+          "command": "codexProviderStatusbar.logoutToBestAccount"
+        },
+        {
+          "command": "codexProviderStatusbar.loginWithSavedAccount"
+        },
+        {
+          "command": "codexProviderStatusbar.saveCurrentAuthSnapshot"
+        },
+        {
+          "command": "codexProviderStatusbar.showCurrentAndNextAccount"
+        },
+        {
+          "command": "codexProviderStatusbar.showCurrentRemainingMetrics"
+        },
+        {
+          "command": "codexProviderStatusbar.showDebugLog"
+        },
+        {
+          "command": "codexProviderStatusbar.reloadWindow"
+        },
+        {
+          "command": "codexProviderStatusbar.sendContinuePrompt"
+        },
+        {
+          "command": "codexProviderStatusbar.openVoiceDraft"
+        },
+        {
+          "command": "codexProviderStatusbar.openScreenClipTool"
+        },
+        {
+          "command": "codexProviderStatusbar.captureScreenToChat"
+        },
+        {
+          "command": "codexProviderStatusbar.showCodexLbStatus"
+        },
+        {
+          "command": "codexProviderStatusbar.showCodexLbUsage"
+        },
+        {
+          "command": "codexProviderStatusbar.refreshCodexLbUsage"
+        },
+        {
+          "command": "codexProviderStatusbar.refreshCodexLbModels"
+        },
+        {
+          "command": "codexProviderStatusbar.selectCodexLbRoute"
+        },
+        {
+          "command": "codexProviderStatusbar.openCodexLbDashboard"
+        },
+        {
+          "command": "codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt"
+        },
+        {
+          "command": "codexProviderStatusbar.openNextRemoteSession"
+        },
+        {
+          "command": "codexProviderStatusbar.openCodexSidebar"
+        },
+        {
+          "command": "codexProviderStatusbar.newCodexThread"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex Session Tools",
+      "properties": {
+        "codexProviderStatusbar.openaiModel": {
+          "type": "string",
+          "default": "gpt-5.4",
+          "scope": "application",
+          "description": "Model written to [profiles.openai].model."
+        },
+        "codexProviderStatusbar.autoOpenCodexSidebar": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Open the official Codex sidebar after the extension host restarts."
+        },
+        "codexProviderStatusbar.showStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Show the provider switcher in the VS Code status bar."
+        },
+        "codexProviderStatusbar.showCodexLbUsageStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Show the Codex LB weekly-remaining status item in the VS Code status bar."
+        },
+        "codexProviderStatusbar.rotationEnabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Enable account rotation actions (detect current account, pick best next account, and run Codex logout)."
+        },
+        "codexProviderStatusbar.rotationShowStatusBarItem": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Show the status bar quick-action entry point for account rotation."
+        },
+        "codexProviderStatusbar.rotationVmAlias": {
+          "type": "string",
+          "default": "vm401",
+          "scope": "application",
+          "description": "SSH alias used to read NERO codex-usage cache files (accounts.json and usage-cache.json)."
+        },
+        "codexProviderStatusbar.rotationAutoLoginFromSnapshot": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "When enabled, Logout to Best Account requires a saved auth snapshot for the target account and applies it automatically for one-click ChatGPT login switching."
+        },
+        "codexProviderStatusbar.rotationAuthSnapshotsDir": {
+          "type": "string",
+          "default": "~/.codex/.codex-provider-statusbar/accounts",
+          "scope": "application",
+          "description": "Directory where per-account auth.json snapshots are stored for account auto-login switching."
+        },
+        "codexProviderStatusbar.remoteSessionDefaultAlias": {
+          "type": "string",
+          "default": "codex-dev5",
+          "scope": "application",
+          "description": "Fallback SSH alias used by 'Open Next Remote Session' when the next alias cannot be derived from the current window."
+        },
+        "codexProviderStatusbar.remoteSessionMaxIndex": {
+          "type": "number",
+          "default": 6,
+          "minimum": 2,
+          "maximum": 6,
+          "scope": "application",
+          "description": "Highest codex-dev index opened by 'Open Next Remote Session'. The hard maximum is 6, giving 7 total windows: codex-dev plus codex-dev1..codex-dev6."
+        },
+        "codexProviderStatusbar.remoteSessionOpenPath": {
+          "type": "string",
+          "default": "/etc",
+          "scope": "application",
+          "description": "Remote path opened in the new SSH window for 'Open Next Remote Session'."
+        },
+        "codexProviderStatusbar.codexLbProxyBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:2458",
+          "scope": "application",
+          "description": "Base URL of the local Codex-LB editor proxy."
+        },
+        "codexProviderStatusbar.codexLbDashboardUrl": {
+          "type": "string",
+          "default": "http://10.100.0.246:2455/dashboard",
+          "scope": "application",
+          "description": "Browser URL for the Codex-LB dashboard."
+        },
+        "codexProviderStatusbar.codexLbPrimaryBaseUrl": {
+          "type": "string",
+          "default": "http://10.100.0.246:2455",
+          "scope": "application",
+          "description": "Primary direct Codex-LB base URL used for fallback reads and route metadata."
+        },
+        "codexProviderStatusbar.codexLbFallbackBaseUrl": {
+          "type": "string",
+          "default": "http://10.100.0.234:2455",
+          "scope": "application",
+          "description": "Fallback direct Codex-LB base URL used for route metadata."
+        },
+        "codexProviderStatusbar.codexLbRouteStatePath": {
+          "type": "string",
+          "default": "~/.config/codex-lb-vscode-route.json",
+          "scope": "application",
+          "description": "JSON file written by the Codex-LB route selector."
+        },
+        "codexProviderStatusbar.codexLbProviderEnvPath": {
+          "type": "string",
+          "default": "~/.config/codex-lb-provider.env",
+          "scope": "application",
+          "description": "Env file that exposes CODEX_LB_API_KEY for the extension host."
+        },
+        "codexProviderStatusbar.codexLbModelCacheRefresherPath": {
+          "type": "string",
+          "default": "~/scripts/codex_lb_refresh_model_cache.js",
+          "scope": "application",
+          "description": "Helper script used to refresh the local Codex-LB model cache."
+        },
+        "codexProviderStatusbar.codexLbRouteSelectorPath": {
+          "type": "string",
+          "default": "~/.local/bin/codex-lb-vscode-select",
+          "scope": "application",
+          "description": "Helper executable that switches the active Codex-LB route."
+        }
+      }
+    }
+  }
+}
