@@ -1,38 +1,68 @@
 # Codex Session Tools
 
-Publisher namespace: `oll4com`
-Brand: `OLL4.com`
+Public VS Code extension for Codex and Kilo workflows.
 
-Single custom VS Code extension for:
+![Codex Session Tools overview](media/overview.svg)
 
-- provider switching via `~/.codex/config.toml`
-- account rotation and saved auth snapshots
-- remote Codex/Kilo session helpers
-- Codex LB status, route selection, usage, and model-cache refresh
-- toolbar icons on public Codex and Kilo views
+## Overview
 
-The extension does not patch the official Codex or Kilo bundles. It binds only through public VS Code contribution points such as `view/title`, `editor/title`, commands, status bar items, and user settings.
+Codex Session Tools adds operational workflow helpers to Codex and Kilo through standard VS Code contribution points. It does not patch upstream webviews or bundle modifications into the official extensions.
 
-## Supported surfaces
+The project focuses on three practical workflow areas:
+
+- provider switching through `~/.codex/config.toml`
+- account rotation with saved auth snapshots
+- Codex-LB route control, usage visibility, and helper actions
+
+## Why This Exists
+
+This repository is the canonical public home for the OLL4 extension work that used to be split across earlier private prototypes.
+
+The goal is to keep one maintained extension identity for:
+
+- Codex sidebar workflows
+- Kilo sidebar and tab workflows
+- configurable helper actions that can be adapted to local operator setups
+
+## Supported Surfaces
 
 - Codex sidebar views: `chatgpt.sidebarView`, `chatgpt.sidebarSecondaryView`
 - Kilo sidebar view: `kilo-code.SidebarProvider`
 - Kilo tab panel: `kilo-code.new.TabPanel`
 
-## Main features
+## Main Features
 
-- `Quick Actions` menu for the operational workflows
-- `Reload`, `Screenshot`, `Next Remote Session`, and `Select Codex LB Route` icons in Codex/Kilo
-- account rotation from saved snapshots
-- `συνεχισε` and memory-oriented helper prompts
-- right-side Codex LB usage status item
+- Quick Actions menu for daily operator workflows
+- toolbar buttons for reload, screenshot capture, remote session launch, and Codex-LB route selection
+- one-click account rotation from saved auth snapshots
+- Codex-LB usage and route visibility in VS Code
+- helper prompts such as `συνεχισε` and memory-oriented shortcuts
 
-## Important defaults
+## What Is Original Here
 
-- Codex account rotation still assumes your own cache source and SSH alias defaults unless reconfigured in settings.
-- Codex LB helper commands depend on local helper files and `CODEX_LB_API_KEY`.
-- The manifest is prepared for packaging, but public release still requires choosing a final license and publisher namespace.
+- the VS Code extension glue code and command surface
+- multi-surface toolbar integration for Codex and Kilo
+- public-safe Codex-LB route metadata handling
+- account rotation workflow based on configurable ranking data and local auth snapshots
+
+## Configuration Notes
+
+- All Codex-LB URLs now default to local example addresses (`127.0.0.1`) instead of internal infrastructure.
+- Account ranking, remote-session presence sync, and helper command paths are configurable in VS Code settings.
+- Helper commands can optionally read a local env file if your setup needs external credentials.
+
+## Limitations
+
+- The extension assumes you already have Codex and/or Kilo installed.
+- Some helper actions are only useful if you configure your own local scripts, route-state files, or account ranking source.
+- This repository does not publish secrets, runtime state, or internal infrastructure defaults.
+
+## Release Status
+
+- Current public repo version: `0.2.0`
+- License: MIT
+- Changelog: see [CHANGELOG.md](CHANGELOG.md)
 
 ## Packaging
 
-See `PUBLISHING.md` for Marketplace/Open VSX steps.
+Packaging and marketplace notes live in [PUBLISHING.md](PUBLISHING.md).

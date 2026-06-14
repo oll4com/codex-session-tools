@@ -1,35 +1,35 @@
 # Publishing
 
-This repository is now structured so one extension can cover both Codex and Kilo without patching either upstream bundle.
+Codex Session Tools is prepared as a public-source repository and can be packaged without exposing internal infrastructure defaults.
 
-## Before public release
+## Public Release Checklist
 
-1. Choose a real publisher namespace.
-2. The current manifest already uses the namespace `oll4com`.
-3. Choose a final public license and replace `"UNLICENSED"`.
-4. Verify all default URLs, SSH aliases, and helper paths match what you want to ship.
+1. Review the version in `package.json`.
+2. Confirm the README, changelog, and screenshots reflect the current feature set.
+3. Verify your local settings override any example helper paths or local endpoints you do not want to ship as defaults.
+4. Package from a clean working tree.
 
 ## VS Code Marketplace
 
-1. Install tooling:
+Install tooling:
 
 ```bash
 npm install -g @vscode/vsce
 ```
 
-2. Login once:
+Login once:
 
 ```bash
 vsce login <publisher>
 ```
 
-3. Package:
+Package locally:
 
 ```bash
 vsce package
 ```
 
-4. Publish:
+Publish:
 
 ```bash
 vsce publish
@@ -41,13 +41,13 @@ Official docs:
 
 ## Open VSX
 
-1. Install tooling:
+Install tooling:
 
 ```bash
 npm install -g ovsx
 ```
 
-2. Publish:
+Publish:
 
 ```bash
 ovsx publish *.vsix -p <openvsx_token>
@@ -59,6 +59,6 @@ Official docs:
 
 ## Notes
 
-- Keep the extension external to Codex/Kilo for upgrade safety.
-- Prefer settings over hardcoded personal paths for anything new.
-- If you want a public store release under a cleaner id later, create a new extension name before first public publish. Changing name after adoption is a breaking migration.
+- Keep the extension external to Codex and Kilo for upgrade safety.
+- Prefer documented settings over hardcoded machine-specific paths.
+- If you later want a marketplace-specific identity, create it before public adoption to avoid a breaking rename.

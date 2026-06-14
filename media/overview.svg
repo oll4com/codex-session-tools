@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Session Tools overview</title>
+  <desc id="desc">A stylized overview graphic showing quick actions, route control, and account rotation for Codex Session Tools.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#08111f"/>
+      <stop offset="100%" stop-color="#12263a"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#10243a"/>
+      <stop offset="100%" stop-color="#163553"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0%" stop-color="#29b6f6"/>
+      <stop offset="100%" stop-color="#7ee787"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <circle cx="1115" cy="145" r="160" fill="#17314d" opacity="0.32"/>
+  <circle cx="180" cy="600" r="210" fill="#0f2235" opacity="0.45"/>
+  <rect x="70" y="70" width="1140" height="580" rx="28" fill="#0a1726" stroke="#28435d" stroke-width="2"/>
+  <rect x="100" y="110" width="1080" height="56" rx="16" fill="#101f30"/>
+  <rect x="124" y="128" width="132" height="20" rx="10" fill="url(#accent)"/>
+  <text x="282" y="147" fill="#d5ecff" font-size="28" font-family="Verdana, Geneva, sans-serif" font-weight="700">Codex Session Tools</text>
+  <text x="995" y="147" fill="#88a8c3" font-size="18" font-family="Verdana, Geneva, sans-serif">Codex + Kilo workflow extension</text>
+  <rect x="100" y="196" width="270" height="414" rx="22" fill="url(#panel)" stroke="#294b68" stroke-width="2"/>
+  <text x="130" y="236" fill="#dff6ff" font-size="26" font-family="Verdana, Geneva, sans-serif" font-weight="700">Quick Actions</text>
+  <text x="130" y="268" fill="#8ab0cb" font-size="17" font-family="Verdana, Geneva, sans-serif">Daily operator workflows in one menu.</text>
+  <g font-family="Verdana, Geneva, sans-serif" font-size="19" fill="#edf7ff">
+    <rect x="130" y="300" width="210" height="46" rx="14" fill="#12283f"/>
+    <text x="154" y="329">Switch provider</text>
+    <rect x="130" y="360" width="210" height="46" rx="14" fill="#12283f"/>
+    <text x="154" y="389">Rotate account</text>
+    <rect x="130" y="420" width="210" height="46" rx="14" fill="#12283f"/>
+    <text x="154" y="449">Open remote session</text>
+    <rect x="130" y="480" width="210" height="46" rx="14" fill="#12283f"/>
+    <text x="154" y="509">Refresh model cache</text>
+  </g>
+  <rect x="400" y="196" width="345" height="190" rx="22" fill="url(#panel)" stroke="#294b68" stroke-width="2"/>
+  <text x="430" y="236" fill="#dff6ff" font-size="26" font-family="Verdana, Geneva, sans-serif" font-weight="700">Route Control</text>
+  <text x="430" y="268" fill="#8ab0cb" font-size="17" font-family="Verdana, Geneva, sans-serif">Direct, fallback, or Headroom routing.</text>
+  <rect x="430" y="300" width="285" height="58" rx="16" fill="#0f2031"/>
+  <text x="454" y="335" fill="#f1fbff" font-size="24" font-family="Verdana, Geneva, sans-serif">LB local:2455</text>
+  <text x="454" y="353" fill="#7ee787" font-size="15" font-family="Verdana, Geneva, sans-serif">Healthy upstream selected</text>
+  <rect x="400" y="420" width="345" height="190" rx="22" fill="url(#panel)" stroke="#294b68" stroke-width="2"/>
+  <text x="430" y="460" fill="#dff6ff" font-size="26" font-family="Verdana, Geneva, sans-serif" font-weight="700">Account Rotation</text>
+  <text x="430" y="492" fill="#8ab0cb" font-size="17" font-family="Verdana, Geneva, sans-serif">Saved auth snapshots and ranked usage data.</text>
+  <rect x="430" y="522" width="285" height="58" rx="16" fill="#0f2031"/>
+  <text x="454" y="556" fill="#f1fbff" font-size="24" font-family="Verdana, Geneva, sans-serif">Ready for one-click switch</text>
+  <text x="454" y="575" fill="#29b6f6" font-size="15" font-family="Verdana, Geneva, sans-serif">Configured through VS Code settings</text>
+  <rect x="775" y="196" width="375" height="414" rx="22" fill="url(#panel)" stroke="#294b68" stroke-width="2"/>
+  <text x="805" y="236" fill="#dff6ff" font-size="26" font-family="Verdana, Geneva, sans-serif" font-weight="700">Public-Safe Defaults</text>
+  <text x="805" y="268" fill="#8ab0cb" font-size="17" font-family="Verdana, Geneva, sans-serif">No internal IPs, private paths, or bundled hacks.</text>
+  <g font-family="Verdana, Geneva, sans-serif" font-size="20">
+    <rect x="805" y="304" width="315" height="62" rx="16" fill="#0f2031"/>
+    <text x="830" y="341" fill="#f1fbff">Local Codex LB examples</text>
+    <rect x="805" y="386" width="315" height="62" rx="16" fill="#0f2031"/>
+    <text x="830" y="423" fill="#f1fbff">Configurable helper paths</text>
+    <rect x="805" y="468" width="315" height="62" rx="16" fill="#0f2031"/>
+    <text x="830" y="505" fill="#f1fbff">MIT licensed public repo</text>
+  </g>
+  <text x="100" y="682" fill="#89a9c1" font-size="17" font-family="Verdana, Geneva, sans-serif">Overview graphic for the public GitHub repository README.</text>
+</svg>

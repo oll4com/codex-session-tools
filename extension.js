@@ -42,8 +42,9 @@ const DEFAULT_ROTATION_AUTH_SNAPSHOTS_DIR = path.join(os.homedir(), ".codex", ".
 const LEGACY_ROTATION_AUTH_SNAPSHOTS_DIR = path.join(os.homedir(), ".codex", ".codex-account", "accounts");
 const LEGACY_ROTATION_AUTH_ROOT_DIR = path.join(os.homedir(), ".codex");
 const ROTATION_AUTH_SNAPSHOT_FILE_SUFFIX = ".auth.json";
-const NERO_CODEX_USAGE_ACCOUNTS_PATH = "/opt/nero-stack/backend/data/codex-usage/accounts.json";
-const NERO_CODEX_USAGE_CACHE_PATH = "/opt/nero-stack/backend/data/codex-usage/usage-cache.json";
+const DEFAULT_ROTATION_USAGE_HOST_ALIAS = "codex-usage-host";
+const DEFAULT_ROTATION_USAGE_ACCOUNTS_PATH = "$HOME/.codex/codex-usage/accounts.json";
+const DEFAULT_ROTATION_USAGE_CACHE_PATH = "$HOME/.codex/codex-usage/usage-cache.json";
 const DEFAULT_SSH_TIMEOUT_MS = 8000;
 const REMOTE_SESSION_ACTIVITY_TIMEOUT_MS = 1800;
 const DEFAULT_CODEX_LOGOUT_TIMEOUT_MS = 20000;
@@ -59,20 +60,21 @@ const REMOTE_SESSION_WORKSPACE_ALIAS_KEY = "remoteSessionWorkspaceAlias";
 const REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY = "remoteSessionWorkspaceAliasSource";
 const REMOTE_SESSION_ALIAS_REGISTRY_DIR = "remote-session-aliases";
 const REMOTE_SESSION_ALIAS_ORDER_VERSION = "remote-alias-source-trust-20260424";
-const REMOTE_SESSION_VM401_SYNC_SSH_ALIAS = "vm401";
-const REMOTE_SESSION_VM401_SYNC_DIR = "/opt/nero-stack/backend/data/codex-usage/ssh-sessions";
-const REMOTE_SESSION_VM401_SYNC_TIMEOUT_MS = 5000;
-const REMOTE_SESSION_VM401_SYNC_MIN_INTERVAL_MS = 20 * 1000;
+const DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS = "codex-usage-host";
+const DEFAULT_REMOTE_SESSION_PRESENCE_DIR = "/var/tmp/codex-session-tools/ssh-sessions";
+const REMOTE_SESSION_PRESENCE_SYNC_TIMEOUT_MS = 5000;
+const REMOTE_SESSION_PRESENCE_SYNC_MIN_INTERVAL_MS = 20 * 1000;
 const STATUSBAR_LAST_ACCOUNT_ID_KEY = "statusBarLastAccountId";
-const DEFAULT_REMOTE_SESSION_ALIAS = "codex-dev5";
-const DEFAULT_REMOTE_SESSION_PATH = "/etc";
-const DEFAULT_REMOTE_SESSION_MAX_INDEX = 6;
+const DEFAULT_REMOTE_SESSION_ALIAS = "codex-dev";
+const DEFAULT_REMOTE_SESSION_PATH = "/";
+const DEFAULT_REMOTE_SESSION_MAX_INDEX = 5;
 const COMMAND_CHAIN_STEP_DELAY_MS = 60;
 const SCREEN_CAPTURE_DIR_NAME = "codex-screen-captures";
 const DEFAULT_CODEX_LB_PROXY_BASE_URL = "http://127.0.0.1:2458";
-const DEFAULT_CODEX_LB_DASHBOARD_URL = "http://10.100.0.246:2455/dashboard";
-const DEFAULT_CODEX_LB_PRIMARY_BASE_URL = "http://10.100.0.246:2455";
-const DEFAULT_CODEX_LB_FALLBACK_BASE_URL = "http://10.100.0.234:2455";
+const DEFAULT_CODEX_LB_DASHBOARD_URL = "http://127.0.0.1:2455/dashboard";
+const DEFAULT_CODEX_LB_PRIMARY_BASE_URL = "http://127.0.0.1:2455";
+const DEFAULT_CODEX_LB_FALLBACK_BASE_URL = "http://127.0.0.1:2456";
+const DEFAULT_CODEX_LB_HEADROOM_BASE_URL = "http://127.0.0.1:8787";
 const DEFAULT_CODEX_LB_ROUTE_STATE_PATH = path.join(os.homedir(), ".config", "codex-lb-vscode-route.json");
 const DEFAULT_CODEX_LB_PROVIDER_ENV_PATH = path.join(os.homedir(), ".config", "codex-lb-provider.env");
 const DEFAULT_CODEX_LB_MODEL_CACHE_REFRESHER_PATH = path.join(os.homedir(), "scripts", "codex_lb_refresh_model_cache.js");
@@ -91,14 +93,15 @@ const CODEX_LB_LAST_MODEL_STATE_PATH = path.join(
 );
 const CODEX_LB_USAGE_REFRESH_INTERVAL_MS = 30 * 1000;
 const CODEX_LB_FETCH_TIMEOUT_MS = 8 * 1000;
+const FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS = true;
 
 let currentRemoteSessionAlias = "";
 let currentRemoteSessionAliasSource = "";
 let openNextRemoteSessionInFlight = null;
 let remoteSessionInstanceId = "";
 let remoteSessionStartedAt = new Date().toISOString();
-let lastRemoteSessionVm401SyncAtMs = 0;
-let lastRemoteSessionVm401SyncSignature = "";
+let lastRemoteSessionPresenceSyncAtMs = 0;
+let lastRemoteSessionPresenceSyncSignature = "";
 let lbUsageRefreshTimer = null;
 let lbUsageStatusBarItem = null;
 let lbUsageRefreshInFlight = false;
@@ -640,7 +643,7 @@ async function heartbeatRemoteSessionAlias(context, outputChannel, reason = "hea
         reason
       });
     }
-    await syncRemoteSessionPresenceToVm401(context, outputChannel, alias, aliasSource || "unknown", reason);
+    await syncRemoteSessionPresence(context, outputChannel, alias, aliasSource || "unknown", reason);
     return alias;
   }
 
@@ -649,7 +652,7 @@ async function heartbeatRemoteSessionAlias(context, outputChannel, reason = "hea
     status: "live",
     log: reason !== "heartbeat"
   });
-  await syncRemoteSessionPresenceToVm401(context, outputChannel, alias, aliasSource || "heartbeat", reason);
+  await syncRemoteSessionPresence(context, outputChannel, alias, aliasSource || "heartbeat", reason);
   return alias;
 }
 
@@ -697,7 +700,7 @@ async function buildRemoteSessionPresencePayload(context, alias, aliasSource, re
   };
 }
 
-async function syncRemoteSessionPresenceToVm401(context, outputChannel, alias, aliasSource, reason = "heartbeat") {
+async function syncRemoteSessionPresence(context, outputChannel, alias, aliasSource, reason = "heartbeat") {
   const normalizedAlias = String(alias || "").trim();
   const normalizedSource = normalizeRemoteSessionAliasSource(aliasSource);
   const canSyncAlias = isStrongRemoteSessionAliasSource(normalizedSource) || isWorkspaceBackedRemoteSessionAliasSource(normalizedSource);
@@ -705,6 +708,9 @@ async function syncRemoteSessionPresenceToVm401(context, outputChannel, alias, a
     return false;
   }
 
+  const settings = getSettings();
+  const syncAlias = String(settings.remoteSessionPresenceAlias || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS;
+  const syncDir = String(settings.remoteSessionPresenceDir || DEFAULT_REMOTE_SESSION_PRESENCE_DIR).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_DIR;
   const payload = await buildRemoteSessionPresencePayload(context, normalizedAlias, normalizedSource, reason);
   const signature = JSON.stringify([
     payload.alias,
@@ -720,17 +726,17 @@ async function syncRemoteSessionPresenceToVm401(context, outputChannel, alias, a
   const now = Date.now();
   if (
     reason === "heartbeat" &&
-    signature === lastRemoteSessionVm401SyncSignature &&
-    (now - lastRemoteSessionVm401SyncAtMs) < REMOTE_SESSION_VM401_SYNC_MIN_INTERVAL_MS
+    signature === lastRemoteSessionPresenceSyncSignature &&
+    (now - lastRemoteSessionPresenceSyncAtMs) < REMOTE_SESSION_PRESENCE_SYNC_MIN_INTERVAL_MS
   ) {
     return false;
   }
 
-  const remoteFilePath = `${REMOTE_SESSION_VM401_SYNC_DIR}/${encodeURIComponent(payload.sessionId)}.json`;
+  const remoteFilePath = `${syncDir}/${encodeURIComponent(payload.sessionId)}.json`;
   const payloadBase64 = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, "utf8").toString("base64");
   const remoteScript = [
     "set -euo pipefail",
-    `dir=${shellQuote(REMOTE_SESSION_VM401_SYNC_DIR)}`,
+    `dir=${shellQuote(syncDir)}`,
     `file=${shellQuote(remoteFilePath)}`,
     "tmp=\"$file.tmp.$$\"",
     "mkdir -p \"$dir\"",
@@ -742,26 +748,28 @@ async function syncRemoteSessionPresenceToVm401(context, outputChannel, alias, a
   try {
     await execFileJsonSafe(
       "ssh",
-      [REMOTE_SESSION_VM401_SYNC_SSH_ALIAS, "bash", "-lc", remoteScript],
-      REMOTE_SESSION_VM401_SYNC_TIMEOUT_MS
+      [syncAlias, "bash", "-lc", remoteScript],
+      REMOTE_SESSION_PRESENCE_SYNC_TIMEOUT_MS
     );
-    lastRemoteSessionVm401SyncAtMs = now;
-    lastRemoteSessionVm401SyncSignature = signature;
+    lastRemoteSessionPresenceSyncAtMs = now;
+    lastRemoteSessionPresenceSyncSignature = signature;
     if (reason !== "heartbeat") {
-      await appendDebugLog(context, outputChannel, "remote-session-vm401-sync-success", {
+      await appendDebugLog(context, outputChannel, "remote-session-presence-sync-success", {
         alias: normalizedAlias,
         aliasSource: normalizedSource,
         sessionId: payload.sessionId,
         remoteFilePath,
+        syncAlias,
         reason
       });
     }
     return true;
   } catch (error) {
-    await appendDebugLog(context, outputChannel, "remote-session-vm401-sync-failed", {
+    await appendDebugLog(context, outputChannel, "remote-session-presence-sync-failed", {
       alias: normalizedAlias,
       aliasSource: normalizedSource,
       sessionId: payload.sessionId,
+      syncAlias,
       reason,
       message: error instanceof Error ? error.message : String(error)
     });
@@ -769,12 +777,15 @@ async function syncRemoteSessionPresenceToVm401(context, outputChannel, alias, a
   }
 }
 
-async function removeRemoteSessionPresenceFromVm401(context, outputChannel, reason = "deactivate") {
+async function removeRemoteSessionPresence(context, outputChannel, reason = "deactivate") {
   const sessionId = getRemoteSessionInstanceId(context);
   if (!sessionId) {
     return false;
   }
-  const remoteFilePath = `${REMOTE_SESSION_VM401_SYNC_DIR}/${encodeURIComponent(sessionId)}.json`;
+  const settings = getSettings();
+  const syncAlias = String(settings.remoteSessionPresenceAlias || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS;
+  const syncDir = String(settings.remoteSessionPresenceDir || DEFAULT_REMOTE_SESSION_PRESENCE_DIR).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_DIR;
+  const remoteFilePath = `${syncDir}/${encodeURIComponent(sessionId)}.json`;
   const remoteScript = [
     "set -euo pipefail",
     `file=${shellQuote(remoteFilePath)}`,
@@ -784,19 +795,21 @@ async function removeRemoteSessionPresenceFromVm401(context, outputChannel, reas
   try {
     await execFileJsonSafe(
       "ssh",
-      [REMOTE_SESSION_VM401_SYNC_SSH_ALIAS, "bash", "-lc", remoteScript],
-      REMOTE_SESSION_VM401_SYNC_TIMEOUT_MS
+      [syncAlias, "bash", "-lc", remoteScript],
+      REMOTE_SESSION_PRESENCE_SYNC_TIMEOUT_MS
     );
-    await appendDebugLog(context, outputChannel, "remote-session-vm401-sync-removed", {
+    await appendDebugLog(context, outputChannel, "remote-session-presence-sync-removed", {
       sessionId,
       remoteFilePath,
+      syncAlias,
       reason
     });
     return true;
   } catch (error) {
-    await appendDebugLog(context, outputChannel, "remote-session-vm401-sync-remove-failed", {
+    await appendDebugLog(context, outputChannel, "remote-session-presence-sync-remove-failed", {
       sessionId,
       remoteFilePath,
+      syncAlias,
       reason,
       message: error instanceof Error ? error.message : String(error)
     });
@@ -960,20 +973,25 @@ function getSettings() {
   return {
     openaiModel: config.get("openaiModel", DEFAULTS.openaiModel),
     autoOpenCodexSidebar: true,
-    showStatusBarItem: config.get("showStatusBarItem", true),
+    showStatusBarItem: FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS ? false : config.get("showStatusBarItem", true),
     showCodexLbUsageStatusBarItem: config.get("showCodexLbUsageStatusBarItem", true),
     rotationEnabled: config.get("rotationEnabled", true),
-    rotationShowStatusBarItem: config.get("rotationShowStatusBarItem", true),
-    rotationVmAlias: config.get("rotationVmAlias", "vm401"),
+    rotationShowStatusBarItem: FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS ? false : config.get("rotationShowStatusBarItem", true),
+    rotationVmAlias: config.get("rotationVmAlias", DEFAULT_ROTATION_USAGE_HOST_ALIAS),
+    rotationAccountsPath: config.get("rotationAccountsPath", DEFAULT_ROTATION_USAGE_ACCOUNTS_PATH),
+    rotationUsageCachePath: config.get("rotationUsageCachePath", DEFAULT_ROTATION_USAGE_CACHE_PATH),
     rotationAutoLoginFromSnapshot: config.get("rotationAutoLoginFromSnapshot", true),
     rotationAuthSnapshotsDir: config.get("rotationAuthSnapshotsDir", "~/.codex/.codex-provider-statusbar/accounts"),
     remoteSessionDefaultAlias: config.get("remoteSessionDefaultAlias", DEFAULT_REMOTE_SESSION_ALIAS),
     remoteSessionMaxIndex: config.get("remoteSessionMaxIndex", DEFAULT_REMOTE_SESSION_MAX_INDEX),
     remoteSessionOpenPath: config.get("remoteSessionOpenPath", DEFAULT_REMOTE_SESSION_PATH),
+    remoteSessionPresenceAlias: config.get("remoteSessionPresenceAlias", DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS),
+    remoteSessionPresenceDir: config.get("remoteSessionPresenceDir", DEFAULT_REMOTE_SESSION_PRESENCE_DIR),
     codexLbProxyBaseUrl: config.get("codexLbProxyBaseUrl", DEFAULT_CODEX_LB_PROXY_BASE_URL),
     codexLbDashboardUrl: config.get("codexLbDashboardUrl", DEFAULT_CODEX_LB_DASHBOARD_URL),
     codexLbPrimaryBaseUrl: config.get("codexLbPrimaryBaseUrl", DEFAULT_CODEX_LB_PRIMARY_BASE_URL),
     codexLbFallbackBaseUrl: config.get("codexLbFallbackBaseUrl", DEFAULT_CODEX_LB_FALLBACK_BASE_URL),
+    codexLbHeadroomBaseUrl: config.get("codexLbHeadroomBaseUrl", DEFAULT_CODEX_LB_HEADROOM_BASE_URL),
     codexLbRouteStatePath: config.get("codexLbRouteStatePath", "~/.config/codex-lb-vscode-route.json"),
     codexLbProviderEnvPath: config.get("codexLbProviderEnvPath", "~/.config/codex-lb-provider.env"),
     codexLbModelCacheRefresherPath: config.get("codexLbModelCacheRefresherPath", "~/scripts/codex_lb_refresh_model_cache.js"),
@@ -1113,12 +1131,8 @@ function getActiveThreadName() {
 }
 
 function getSelectedCodexLbRouteMode(settings) {
-  const route = lbStatusLastPayload && lbStatusLastPayload.route;
-  const mode = route && typeof route === "object" ? String(route.mode || "").trim() : "";
-  if (mode) {
-    return mode;
-  }
-  return getCodexLbRouteState(settings).mode;
+  const routeState = getCodexLbRouteState(settings);
+  return routeState.routeMode || "direct";
 }
 
 function getCodexLbUpstreamInfo(settings, name) {
@@ -1150,6 +1164,10 @@ function chooseHealthyCodexLbUpstreamName() {
 }
 
 function describeActiveCodexLb(settings) {
+  const routeState = getCodexLbRouteState(settings);
+  if (routeState.routeMode === "headroom") {
+    return `headroom ${routeState.headroomBaseUrl}`;
+  }
   const upstream = lbUsageLastUpstream || chooseHealthyCodexLbUpstreamName();
   const upstreamInfo = upstream ? getCodexLbUpstreamInfo(settings, upstream) : null;
   if (upstreamInfo && upstreamInfo.base_url) {
@@ -1161,19 +1179,36 @@ function describeActiveCodexLb(settings) {
   return "unknown";
 }
 
+function formatBaseUrlShortLabel(prefix, baseUrl, fallbackLabel) {
+  try {
+    const parsed = new URL(String(baseUrl || "").trim());
+    const isLocal = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    const hostLabel = isLocal
+      ? `local${parsed.port ? `:${parsed.port}` : ""}`
+      : parsed.hostname;
+    return hostLabel ? `${prefix} ${hostLabel}` : fallbackLabel;
+  } catch {
+    return fallbackLabel;
+  }
+}
+
 function formatActiveCodexLbShortLabel(settings) {
+  const routeState = getCodexLbRouteState(settings);
+  if (routeState.routeMode === "headroom") {
+    return formatBaseUrlShortLabel("HR", routeState.headroomBaseUrl, "HR");
+  }
   const upstream = lbUsageLastUpstream || chooseHealthyCodexLbUpstreamName();
   const upstreamInfo = upstream ? getCodexLbUpstreamInfo(settings, upstream) : null;
   const url = upstreamInfo ? String(upstreamInfo.base_url || "") : "";
-  const match = url.match(/10\.100\.0\.(\d+):2455/);
-  if (match) {
-    return `LB .${match[1]}`;
+  if (url) {
+    return formatBaseUrlShortLabel("LB", url, upstream ? `LB ${upstream}` : "LB");
   }
   return upstream ? `LB ${upstream}` : "LB";
 }
 
 function formatCodexLbRouteLine(settings) {
   const route = lbStatusLastPayload && lbStatusLastPayload.route;
+  const routeMode = route && typeof route === "object" ? String(route.route_mode || "direct").trim() : "";
   const mode = route && typeof route === "object" ? String(route.mode || "").trim() : "";
   const active = Array.isArray(lbStatusLastPayload && lbStatusLastPayload.active_upstreams)
     ? lbStatusLastPayload.active_upstreams
@@ -1183,18 +1218,24 @@ function formatCodexLbRouteLine(settings) {
     .filter(Boolean)
     .join(", ");
 
+  if (routeMode && activeText) {
+    return `${routeMode}${mode ? `/${mode}` : ""}: ${activeText}`;
+  }
+  if (routeMode) {
+    return `${routeMode}${mode ? `/${mode}` : ""}`;
+  }
   if (mode && activeText) {
-    return `${mode}: ${activeText}`;
+    return `direct/${mode}: ${activeText}`;
   }
   if (mode) {
-    return mode;
+    return `direct/${mode}`;
   }
   const routeState = getCodexLbRouteState(settings);
   const directActive = getCodexLbRouteTargets(settings)[0];
   if (directActive) {
-    return `${routeState.mode}: ${directActive.name} ${directActive.baseUrl}`;
+    return `${routeState.routeMode}/${routeState.mode}: ${directActive.name} ${directActive.baseUrl}`;
   }
-  return routeState.mode;
+  return `${routeState.routeMode}/${routeState.mode}`;
 }
 
 function formatCodexLbInteger(value) {
@@ -1348,20 +1389,32 @@ function buildCodexLbRouteQuickPickItems(settings, currentMode) {
 
   return [
     {
+      label: "$(plug) Direct",
+      description: currentMode === "direct" ? "current" : "current Codex-LB path",
+      detail: "Use the local router directly against the selected Codex-LB upstream mode.",
+      mode: "direct"
+    },
+    {
+      label: "$(rocket) Headroom Gateway",
+      description: currentMode === "headroom" ? "current" : "VM215 compression pilot",
+      detail: formatCodexLbRoutePickDetail("headroom", upstreams.headroom, settings.codexLbHeadroomBaseUrl),
+      mode: "headroom"
+    },
+    {
       label: "$(server) Primary",
-      description: currentMode === "primary" ? "current" : "primary LB",
+      description: currentMode === "primary" ? "current upstream" : "primary LB",
       detail: formatCodexLbRoutePickDetail("primary", upstreams.primary, settings.codexLbPrimaryBaseUrl),
       mode: "primary"
     },
     {
       label: "$(split-horizontal) Auto failover",
-      description: currentMode === "auto" ? "current" : "primary then fallback",
+      description: currentMode === "auto" ? "current upstream" : "primary then fallback",
       detail: "Try primary first, then fallback only on configured retry statuses.",
       mode: "auto"
     },
     {
       label: "$(debug-disconnect) Fallback",
-      description: currentMode === "fallback" ? "current" : "standby fallback",
+      description: currentMode === "fallback" ? "current upstream" : "standby fallback",
       detail: formatCodexLbRoutePickDetail("fallback", upstreams.fallback, settings.codexLbFallbackBaseUrl),
       mode: "fallback"
     }
@@ -1487,13 +1540,9 @@ async function refreshStatusBar(context, outputChannel, statusBarItem, metricsSt
       metricsStatusText: metricsStatusBarItem ? metricsStatusBarItem.text : null
     });
   } catch (error) {
-    statusBarItem.text = "$(comment-discussion) Codex: Error";
-    statusBarItem.tooltip = error instanceof Error ? error.message : String(error);
-    statusBarItem.show();
+    statusBarItem.hide();
     if (metricsStatusBarItem) {
-      metricsStatusBarItem.text = "$(history)-- $(calendar)--";
-      metricsStatusBarItem.tooltip = `Metrics unavailable: ${error instanceof Error ? error.message : String(error)}`;
-      metricsStatusBarItem.show();
+      metricsStatusBarItem.hide();
     }
     await appendDebugLog(context, outputChannel, "statusbar-refresh-error", {
       message: error instanceof Error ? error.message : String(error)
@@ -1503,12 +1552,22 @@ async function refreshStatusBar(context, outputChannel, statusBarItem, metricsSt
 
 async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   const shouldOpen = context.globalState.get(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
-  if (!shouldOpen) {
-    await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip");
+  const settings = getSettings();
+  const workspaceAlias = String(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_KEY, "") || "").trim();
+  const shouldOpenBlankRemoteWindow = !shouldOpen
+    && settings.autoOpenCodexSidebar
+    && looksLikeRemoteSessionAlias(workspaceAlias)
+    && !vscode.window.activeTextEditor
+    && vscode.window.visibleTextEditors.length === 0;
+
+  if (!shouldOpen && !shouldOpenBlankRemoteWindow) {
+    await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip", {
+      workspaceAlias: workspaceAlias || null,
+      blankWindowFallbackEligible: shouldOpenBlankRemoteWindow
+    });
     return;
   }
 
-  const settings = getSettings();
   if (!settings.autoOpenCodexSidebar) {
     await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip-disabled");
@@ -1519,13 +1578,14 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   const debugPayload = {
     detectedCurrentAlias: detectCurrentSshAlias(),
     remoteName: String(vscode.env.remoteName || ""),
+    workspaceAlias: workspaceAlias || null,
+    openedBecauseBlankWindow: shouldOpenBlankRemoteWindow,
     lastRotationTarget: context.globalState.get(ROTATION_LAST_TARGET_KEY, null),
     lastRotationCurrent: context.globalState.get(ROTATION_LAST_CURRENT_KEY, null),
     lastRotationLogoutAt: context.globalState.get(ROTATION_LAST_LOGOUT_AT_KEY, null)
   };
   await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-request", debugPayload);
 
-  // Try immediately after activation, then retry if the sidebar is still warming up.
   let sidebarOpenTriggered = false;
   for (const delayMs of [0, 1200, 4000]) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-scheduled", {
@@ -1542,7 +1602,10 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
             ...debugPayload,
             delayMs
           });
-          await vscode.commands.executeCommand("chatgpt.openSidebar");
+          const opened = await openCodexSidebarBestEffort(context, outputChannel);
+          if (!opened) {
+            throw new Error("No Codex sidebar command matched");
+          }
           await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-dispatched", {
             ...debugPayload,
             delayMs
@@ -1831,15 +1894,21 @@ function getCodexLbRouteState(settings) {
   try {
     const parsed = JSON.parse(fsSync.readFileSync(getCodexLbRouteStatePath(settings), "utf8"));
     return {
+      routeMode: normalizeCodexLbRoutePathMode(parsed && parsed.route_mode),
       mode: normalizeCodexLbRouteMode(parsed && parsed.mode),
       primaryBaseUrl: normalizeCodexLbBaseUrl(parsed && parsed.primary_base_url, settings.codexLbPrimaryBaseUrl),
-      fallbackBaseUrl: normalizeCodexLbBaseUrl(parsed && parsed.fallback_base_url, settings.codexLbFallbackBaseUrl)
+      fallbackBaseUrl: normalizeCodexLbBaseUrl(parsed && parsed.fallback_base_url, settings.codexLbFallbackBaseUrl),
+      headroomBaseUrl: normalizeCodexLbBaseUrl(parsed && parsed.headroom_base_url, settings.codexLbHeadroomBaseUrl),
+      headroomFailoverToDirect: parsed && parsed.headroom_failover_to_direct !== false
     };
   } catch {
     return {
+      routeMode: "direct",
       mode: "primary",
       primaryBaseUrl: normalizeCodexLbBaseUrl("", settings.codexLbPrimaryBaseUrl),
-      fallbackBaseUrl: normalizeCodexLbBaseUrl("", settings.codexLbFallbackBaseUrl)
+      fallbackBaseUrl: normalizeCodexLbBaseUrl("", settings.codexLbFallbackBaseUrl),
+      headroomBaseUrl: normalizeCodexLbBaseUrl("", settings.codexLbHeadroomBaseUrl),
+      headroomFailoverToDirect: true
     };
   }
 }
@@ -1861,6 +1930,11 @@ function getCodexLbRouteTargets(settings) {
 function normalizeCodexLbRouteMode(value) {
   const mode = String(value || "").trim().toLowerCase();
   return ["primary", "fallback", "auto"].includes(mode) ? mode : "primary";
+}
+
+function normalizeCodexLbRoutePathMode(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return ["direct", "headroom"].includes(mode) ? mode : "direct";
 }
 
 function normalizeCodexLbBaseUrl(value, fallback) {
@@ -2338,14 +2412,16 @@ function rankRotationAccounts(accounts) {
 }
 
 async function loadRotationRanking(context, outputChannel, settings) {
-  const vmAlias = String(settings.rotationVmAlias || "vm401").trim() || "vm401";
+  const vmAlias = String(settings.rotationVmAlias || DEFAULT_ROTATION_USAGE_HOST_ALIAS).trim() || DEFAULT_ROTATION_USAGE_HOST_ALIAS;
+  const accountsPath = String(settings.rotationAccountsPath || DEFAULT_ROTATION_USAGE_ACCOUNTS_PATH).trim() || DEFAULT_ROTATION_USAGE_ACCOUNTS_PATH;
+  const usageCachePath = String(settings.rotationUsageCachePath || DEFAULT_ROTATION_USAGE_CACHE_PATH).trim() || DEFAULT_ROTATION_USAGE_CACHE_PATH;
   const [accountsRaw, usageCacheRaw] = await Promise.all([
-    readRemoteFileOverSsh(vmAlias, NERO_CODEX_USAGE_ACCOUNTS_PATH),
-    readRemoteFileOverSsh(vmAlias, NERO_CODEX_USAGE_CACHE_PATH)
+    readRemoteFileOverSsh(vmAlias, accountsPath),
+    readRemoteFileOverSsh(vmAlias, usageCachePath)
   ]);
 
-  const accountsPayload = parseJsonObject(accountsRaw, NERO_CODEX_USAGE_ACCOUNTS_PATH);
-  const usageCache = parseJsonObject(usageCacheRaw, NERO_CODEX_USAGE_CACHE_PATH);
+  const accountsPayload = parseJsonObject(accountsRaw, accountsPath);
+  const usageCache = parseJsonObject(usageCacheRaw, usageCachePath);
   const baseAccounts = Array.isArray(accountsPayload.accounts) ? accountsPayload.accounts : [];
 
   const enabledAccounts = baseAccounts
@@ -2366,6 +2442,8 @@ async function loadRotationRanking(context, outputChannel, settings) {
   const ranked = rankRotationAccounts(enabledAccounts);
   await appendDebugLog(context, outputChannel, "rotation-ranking-loaded", {
     vmAlias,
+    accountsPath,
+    usageCachePath,
     enabledAccounts: enabledAccounts.length,
     rankedAccounts: ranked.length,
     topTargetEmail: ranked[0]?.label || null
@@ -2891,9 +2969,43 @@ async function executeBestCommand(context, outputChannel, commandCandidates, arg
   return null;
 }
 
-async function focusCodexComposer(context, outputChannel) {
-  await vscode.commands.executeCommand("chatgpt.openSidebar");
+async function openCodexSidebarBestEffort(context, outputChannel) {
+  const opened = await executeBestCommand(
+    context,
+    outputChannel,
+    [
+      "chatgpt.openSidebar",
+      "workbench.view.extension.codexSecondaryViewContainer",
+      "workbench.view.extension.codexViewContainer"
+    ],
+    [[]],
+    "open-codex-sidebar"
+  );
+
+  if (!opened) {
+    return false;
+  }
+
   await delay(COMMAND_CHAIN_STEP_DELAY_MS);
+  await executeBestCommand(
+    context,
+    outputChannel,
+    [
+      "workbench.action.chat.focusInput",
+      "chat.action.focusInput",
+      "chat.action.focus"
+    ],
+    [[]],
+    "focus-codex-sidebar-input"
+  );
+  return true;
+}
+
+async function focusCodexComposer(context, outputChannel) {
+  const opened = await openCodexSidebarBestEffort(context, outputChannel);
+  if (!opened) {
+    return null;
+  }
 
   return executeBestCommand(
     context,
@@ -3884,6 +3996,59 @@ function buildRemoteAliasCandidates(prefix, maxIndex) {
   return aliases;
 }
 
+async function selectRemoteSessionAlias(context, outputChannel, settings, nextRemote, traceId) {
+  const currentAlias = String((nextRemote && nextRemote.currentAlias) || detectCurrentSshAlias() || "").trim();
+  const series = resolveRemoteSeriesSettings(settings, currentAlias);
+  const aliasCandidates = buildRemoteAliasCandidates(series.prefix, series.maxIndex);
+  const suggestedAlias = String((nextRemote && nextRemote.targetAlias) || "").trim();
+  const remotePath = normalizeRemotePath(settings.remoteSessionOpenPath);
+
+  const selection = await vscode.window.showQuickPick(
+    aliasCandidates.map((alias) => {
+      const descriptionParts = [];
+      if (alias === suggestedAlias) {
+        descriptionParts.push("suggested");
+      }
+      if (alias === currentAlias) {
+        descriptionParts.push("current window");
+      }
+      return {
+        label: alias,
+        description: descriptionParts.join(" • ") || undefined,
+        detail: `Open ${remotePath}`,
+        alias
+      };
+    }),
+    {
+      title: "Open Remote Session",
+      placeHolder: suggestedAlias
+        ? `Select SSH session window to open (suggested: ${suggestedAlias})`
+        : "Select SSH session window to open",
+      ignoreFocusOut: true,
+      matchOnDescription: true,
+      matchOnDetail: true
+    }
+  );
+
+  if (!selection || !selection.alias) {
+    await appendDebugLog(context, outputChannel, "open-next-remote-session-selection-cancelled", {
+      traceId,
+      currentAlias: currentAlias || null,
+      suggestedAlias: suggestedAlias || null,
+      aliasCandidates
+    });
+    return "";
+  }
+
+  await appendDebugLog(context, outputChannel, "open-next-remote-session-selection-picked", {
+    traceId,
+    currentAlias: currentAlias || null,
+    suggestedAlias: suggestedAlias || null,
+    selectedAlias: selection.alias
+  });
+  return selection.alias;
+}
+
 async function countLocalExtensionHostProcesses() {
   try {
     const { stdout } = await execFileJsonSafe(
@@ -4273,51 +4438,48 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
   });
 
   const nextRemote = await resolveNextRemoteAlias(context, outputChannel, settings, traceId);
-  if (!nextRemote || !nextRemote.targetAlias) {
-    await appendDebugLog(context, outputChannel, "open-next-remote-session-skipped", {
-      traceId,
-      mode: nextRemote && nextRemote.mode ? nextRemote.mode : "no-target"
-    });
-    void vscode.window.showInformationMessage(
-      nextRemote && nextRemote.currentAlias
-        ? `No next SSH slot after ${nextRemote.currentAlias}.`
-        : "Could not determine the current SSH slot."
-    );
+  const targetAlias = await selectRemoteSessionAlias(context, outputChannel, settings, nextRemote, traceId);
+  if (!targetAlias) {
     return;
   }
+
+  const currentAlias = String((nextRemote && nextRemote.currentAlias) || "").trim();
+  const openMode = nextRemote && nextRemote.mode
+    ? `manual-select:${nextRemote.mode}`
+    : "manual-select";
   const remotePath = normalizeRemotePath(settings.remoteSessionOpenPath);
   const remoteUri = vscode.Uri.parse(
-    `vscode-remote://ssh-remote+${encodeURIComponent(nextRemote.targetAlias)}${remotePath}`
+    `vscode-remote://ssh-remote+${encodeURIComponent(targetAlias)}${remotePath}`
   );
   const reservationSource = `open-attempt:${traceId}`;
   openNextRemoteSessionInFlight = {
     traceId,
-    targetAlias: nextRemote.targetAlias
+    targetAlias
   };
   const armedSnapshot = await buildRemoteSessionBootstrapSnapshot(context);
   await writeRemoteSessionBootstrapTrace(context, {
     traceId,
     armedAt: new Date().toISOString(),
-    currentAlias: nextRemote.currentAlias,
-    targetAlias: nextRemote.targetAlias,
-    mode: nextRemote.mode,
+    currentAlias,
+    targetAlias,
+    mode: openMode,
     remotePath,
     armedSnapshot
   });
   await appendDebugLog(context, outputChannel, "open-next-remote-session-debug-armed", {
     traceId,
-    currentAlias: nextRemote.currentAlias,
-    targetAlias: nextRemote.targetAlias,
-    mode: nextRemote.mode,
+    currentAlias,
+    targetAlias,
+    mode: openMode,
     remotePath,
     armedSnapshot
   });
 
   await appendDebugLog(context, outputChannel, "open-next-remote-session-start", {
     traceId,
-    currentAlias: nextRemote.currentAlias,
-    targetAlias: nextRemote.targetAlias,
-    mode: nextRemote.mode,
+    currentAlias,
+    targetAlias,
+    mode: openMode,
     remotePath,
     probes: Array.isArray(nextRemote.probeResults)
       ? nextRemote.probeResults.map((entry) => ({
@@ -4331,10 +4493,16 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
   });
 
   try {
-    await markRemoteSessionAliasLive(context, outputChannel, nextRemote.targetAlias, {
+    await markRemoteSessionAliasLive(context, outputChannel, targetAlias, {
       source: reservationSource,
       status: "pending",
       log: false
+    });
+    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, settings.autoOpenCodexSidebar);
+    await appendDebugLog(context, outputChannel, "open-next-remote-session-sidebar-armed", {
+      traceId,
+      targetAlias,
+      shouldOpenSidebar: settings.autoOpenCodexSidebar
     });
     await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "open-next-remote-session");
     await appendDebugLog(context, outputChannel, "open-next-remote-session-openfolder-attempt", {
@@ -4347,19 +4515,19 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
     });
     const knownRaw = context.globalState.get(REMOTE_SESSION_KNOWN_ALIASES_KEY, []);
     const knownAliases = new Set(Array.isArray(knownRaw) ? knownRaw.map((value) => String(value || "").trim()).filter(Boolean) : []);
-    if (nextRemote.currentAlias) {
-      knownAliases.add(nextRemote.currentAlias);
+    if (currentAlias) {
+      knownAliases.add(currentAlias);
     }
-    knownAliases.add(nextRemote.targetAlias);
+    knownAliases.add(targetAlias);
     await context.globalState.update(REMOTE_SESSION_KNOWN_ALIASES_KEY, Array.from(knownAliases).slice(-32));
-    await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, nextRemote.targetAlias);
-    await markRemoteSessionAliasLive(context, outputChannel, nextRemote.targetAlias, {
+    await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, targetAlias);
+    await markRemoteSessionAliasLive(context, outputChannel, targetAlias, {
       source: "open-success",
       status: "pending"
     });
     await appendDebugLog(context, outputChannel, "open-next-remote-session-success", {
       traceId,
-      targetAlias: nextRemote.targetAlias,
+      targetAlias,
       remotePath
     });
   } catch (firstError) {
@@ -4373,35 +4541,36 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
       await vscode.commands.executeCommand("vscode.openFolder", remoteUri, true);
       const knownRaw = context.globalState.get(REMOTE_SESSION_KNOWN_ALIASES_KEY, []);
       const knownAliases = new Set(Array.isArray(knownRaw) ? knownRaw.map((value) => String(value || "").trim()).filter(Boolean) : []);
-      if (nextRemote.currentAlias) {
-        knownAliases.add(nextRemote.currentAlias);
+      if (currentAlias) {
+        knownAliases.add(currentAlias);
       }
-      knownAliases.add(nextRemote.targetAlias);
+      knownAliases.add(targetAlias);
       await context.globalState.update(REMOTE_SESSION_KNOWN_ALIASES_KEY, Array.from(knownAliases).slice(-32));
-      await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, nextRemote.targetAlias);
-      await markRemoteSessionAliasLive(context, outputChannel, nextRemote.targetAlias, {
+      await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, targetAlias);
+      await markRemoteSessionAliasLive(context, outputChannel, targetAlias, {
         source: "open-success",
         status: "pending"
       });
       await appendDebugLog(context, outputChannel, "open-next-remote-session-success", {
         traceId,
-        targetAlias: nextRemote.targetAlias,
+        targetAlias,
         remotePath,
         mode: "boolean-true-fallback"
       });
     } catch (secondError) {
       const message = secondError instanceof Error ? secondError.message : String(secondError);
-      await clearRemoteSessionAliasReservation(context, nextRemote.targetAlias, reservationSource);
+      await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
+      await clearRemoteSessionAliasReservation(context, targetAlias, reservationSource);
       await clearRemoteSessionBootstrapTrace(context);
       await appendDebugLog(context, outputChannel, "open-next-remote-session-failed", {
         traceId,
-        targetAlias: nextRemote.targetAlias,
+        targetAlias,
         remotePath,
         firstError: firstError instanceof Error ? firstError.message : String(firstError),
         message
       });
       void vscode.window.showErrorMessage(
-        `Could not open SSH session ${nextRemote.targetAlias} (${remotePath}): ${message}`
+        `Could not open SSH session ${targetAlias} (${remotePath}): ${message}`
       );
     }
   } finally {
@@ -4415,7 +4584,7 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
       {
         id: "logout-best",
         label: "Logout to best account",
-        description: "Reads codex-usage ranking from vm401 cache and runs codex logout."
+        description: "Reads account ranking from the configured usage host and runs codex logout."
       },
       {
         id: "show-current-next",
@@ -4774,9 +4943,18 @@ function activate(context) {
     vscode.commands.registerCommand("codexProviderStatusbar.openNextRemoteSession", () =>
       openNextRemoteSessionCommand(context, outputChannel)
     ),
-    vscode.commands.registerCommand("codexProviderStatusbar.openCodexSidebar", () => vscode.commands.executeCommand("chatgpt.openSidebar")),
+    vscode.commands.registerCommand("codexProviderStatusbar.openCodexSidebar", async () => {
+      const opened = await openCodexSidebarBestEffort(context, outputChannel);
+      if (!opened) {
+        void vscode.window.showWarningMessage("Δεν μπόρεσα να ανοίξω το Codex sidebar.");
+      }
+    }),
     vscode.commands.registerCommand("codexProviderStatusbar.newCodexThread", async () => {
-      await vscode.commands.executeCommand("chatgpt.openSidebar");
+      const opened = await openCodexSidebarBestEffort(context, outputChannel);
+      if (!opened) {
+        void vscode.window.showWarningMessage("Δεν μπόρεσα να ανοίξω το Codex sidebar για νέο thread.");
+        return;
+      }
       await vscode.commands.executeCommand("chatgpt.newChat");
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
@@ -4835,7 +5013,7 @@ function activate(context) {
   });
   context.subscriptions.push({
     dispose: () => {
-      void removeRemoteSessionPresenceFromVm401(context, outputChannel, "dispose");
+      void removeRemoteSessionPresence(context, outputChannel, "dispose");
     }
   });
   void appendDebugLog(context, outputChannel, "statusbar-refresh-timer-started", {

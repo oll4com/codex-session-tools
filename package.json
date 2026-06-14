@@ -1,10 +1,10 @@
 {
   "name": "codex-session-tools",
   "displayName": "Codex Session Tools",
-  "description": "Provider switching, account rotation, Codex LB controls, and toolbar actions for Codex and Kilo.",
-  "version": "0.1.0",
+  "description": "VS Code extension for Codex and Kilo workflows, account rotation, and Codex LB routing helpers.",
+  "version": "0.2.0",
   "publisher": "oll4com",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/oll4com/codex-session-tools.git"
@@ -18,13 +18,23 @@
     "config-editor.js",
     "README.md",
     "PUBLISHING.md",
-    "LICENSE.md"
+    "LICENSE.md",
+    "CHANGELOG.md",
+    "media"
   ],
   "engines": {
     "vscode": "^1.96.2"
   },
   "categories": [
     "Other"
+  ],
+  "keywords": [
+    "codex",
+    "kilo",
+    "vscode-extension",
+    "productivity",
+    "session-tools",
+    "routing"
   ],
   "activationEvents": [
     "onStartupFinished",
@@ -211,48 +221,58 @@
           "group": "navigation@1"
         },
         {
-          "command": "codexProviderStatusbar.openScreenClipTool",
+          "command": "codexProviderStatusbar.captureScreenToChat",
           "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
           "group": "navigation@2"
         },
         {
-          "command": "codexProviderStatusbar.openNextRemoteSession",
+          "command": "codexProviderStatusbar.openScreenClipTool",
           "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
           "group": "navigation@3"
         },
-        {
-          "command": "codexProviderStatusbar.selectCodexLbRoute",
-          "when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
-          "group": "navigation@4"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "codexProviderStatusbar.openQuickActions",
-          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+				{
+					"command": "codexProviderStatusbar.openNextRemoteSession",
+					"when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+					"group": "navigation@4"
+				},
+				{
+					"command": "codexProviderStatusbar.selectCodexLbRoute",
+					"when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+					"group": "navigation@5"
+				}
+			],
+			"editor/title": [
+				{
+					"command": "codexProviderStatusbar.openQuickActions",
+					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
           "group": "navigation@0"
         },
         {
           "command": "codexProviderStatusbar.reloadWindow",
           "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
           "group": "navigation@1"
-        },
+				},
+				{
+					"command": "codexProviderStatusbar.captureScreenToChat",
+					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+					"group": "navigation@2"
+				},
         {
           "command": "codexProviderStatusbar.openScreenClipTool",
           "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
-          "group": "navigation@2"
-        },
-        {
-          "command": "codexProviderStatusbar.openNextRemoteSession",
-          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
           "group": "navigation@3"
         },
-        {
-          "command": "codexProviderStatusbar.selectCodexLbRoute",
-          "when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
-          "group": "navigation@4"
-        }
-      ],
+				{
+					"command": "codexProviderStatusbar.openNextRemoteSession",
+					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+					"group": "navigation@4"
+				},
+				{
+					"command": "codexProviderStatusbar.selectCodexLbRoute",
+					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+					"group": "navigation@5"
+				}
+			],
       "commandPalette": [
         {
           "command": "codexProviderStatusbar.openQuickActions"
@@ -366,9 +386,21 @@
         },
         "codexProviderStatusbar.rotationVmAlias": {
           "type": "string",
-          "default": "vm401",
+          "default": "codex-usage-host",
           "scope": "application",
-          "description": "SSH alias used to read NERO codex-usage cache files (accounts.json and usage-cache.json)."
+          "description": "SSH alias used to read account ranking data for one-click rotation."
+        },
+        "codexProviderStatusbar.rotationAccountsPath": {
+          "type": "string",
+          "default": "$HOME/.codex/codex-usage/accounts.json",
+          "scope": "application",
+          "description": "Remote JSON path containing the account list used by rotation actions."
+        },
+        "codexProviderStatusbar.rotationUsageCachePath": {
+          "type": "string",
+          "default": "$HOME/.codex/codex-usage/usage-cache.json",
+          "scope": "application",
+          "description": "Remote JSON path containing cached usage metrics for ranked account selection."
         },
         "codexProviderStatusbar.rotationAutoLoginFromSnapshot": {
           "type": "boolean",
@@ -384,23 +416,35 @@
         },
         "codexProviderStatusbar.remoteSessionDefaultAlias": {
           "type": "string",
-          "default": "codex-dev5",
+          "default": "codex-dev",
           "scope": "application",
           "description": "Fallback SSH alias used by 'Open Next Remote Session' when the next alias cannot be derived from the current window."
         },
         "codexProviderStatusbar.remoteSessionMaxIndex": {
           "type": "number",
-          "default": 6,
-          "minimum": 2,
-          "maximum": 6,
+          "default": 5,
+          "minimum": 1,
+          "maximum": 5,
           "scope": "application",
-          "description": "Highest codex-dev index opened by 'Open Next Remote Session'. The hard maximum is 6, giving 7 total windows: codex-dev plus codex-dev1..codex-dev6."
+          "description": "Highest codex-dev index opened by 'Open Next Remote Session'. The hard maximum is 5, giving 6 total windows: codex-dev plus codex-dev1..codex-dev5."
         },
         "codexProviderStatusbar.remoteSessionOpenPath": {
           "type": "string",
-          "default": "/etc",
+          "default": "/",
           "scope": "application",
           "description": "Remote path opened in the new SSH window for 'Open Next Remote Session'."
+        },
+        "codexProviderStatusbar.remoteSessionPresenceAlias": {
+          "type": "string",
+          "default": "codex-usage-host",
+          "scope": "application",
+          "description": "SSH alias used to publish live remote-session presence metadata."
+        },
+        "codexProviderStatusbar.remoteSessionPresenceDir": {
+          "type": "string",
+          "default": "/var/tmp/codex-session-tools/ssh-sessions",
+          "scope": "application",
+          "description": "Remote directory where live remote-session presence files are written."
         },
         "codexProviderStatusbar.codexLbProxyBaseUrl": {
           "type": "string",
@@ -410,21 +454,27 @@
         },
         "codexProviderStatusbar.codexLbDashboardUrl": {
           "type": "string",
-          "default": "http://10.100.0.246:2455/dashboard",
+          "default": "http://127.0.0.1:2455/dashboard",
           "scope": "application",
           "description": "Browser URL for the Codex-LB dashboard."
         },
         "codexProviderStatusbar.codexLbPrimaryBaseUrl": {
           "type": "string",
-          "default": "http://10.100.0.246:2455",
+          "default": "http://127.0.0.1:2455",
           "scope": "application",
           "description": "Primary direct Codex-LB base URL used for fallback reads and route metadata."
         },
         "codexProviderStatusbar.codexLbFallbackBaseUrl": {
           "type": "string",
-          "default": "http://10.100.0.234:2455",
+          "default": "http://127.0.0.1:2456",
           "scope": "application",
           "description": "Fallback direct Codex-LB base URL used for route metadata."
+        },
+        "codexProviderStatusbar.codexLbHeadroomBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "scope": "application",
+          "description": "Headroom gateway base URL used for route metadata."
         },
         "codexProviderStatusbar.codexLbRouteStatePath": {
           "type": "string",
@@ -436,7 +486,7 @@
           "type": "string",
           "default": "~/.config/codex-lb-provider.env",
           "scope": "application",
-          "description": "Env file that exposes CODEX_LB_API_KEY for the extension host."
+          "description": "Optional env file used to expose Codex-LB credentials to helper commands."
         },
         "codexProviderStatusbar.codexLbModelCacheRefresherPath": {
           "type": "string",
