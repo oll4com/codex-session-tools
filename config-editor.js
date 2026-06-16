@@ -124,6 +124,24 @@ function upsertTopLevelString(lines, key, value) {
   return nextLines;
 }
 
+function removeTopLevelString(lines, key) {
+  const nextLines = [];
+  const firstSectionIndex = findFirstSectionIndex(lines);
+  const end = firstSectionIndex === -1 ? lines.length : firstSectionIndex;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (index < end) {
+      const parsed = parseAssignmentLine(lines[index]);
+      if (parsed && parsed.key === key) {
+        continue;
+      }
+    }
+    nextLines.push(lines[index]);
+  }
+
+  return nextLines;
+}
+
 function formatManagedEntries(existingValues, requiredOrder, overrides) {
   const merged = { ...existingValues, ...overrides };
   const orderedKeys = [];
@@ -186,20 +204,9 @@ function replaceSection(lines, sectionName, sectionBodyLines) {
 function buildUpdatedConfigText(existingText, options) {
   const settings = { ...DEFAULTS, ...options };
   const lines = toLines(existingText);
-  const nextProfileName = settings.openaiProfileName;
-
-  const openaiProfileValues = parseSectionValues(lines, `profiles.${settings.openaiProfileName}`);
-
-  let nextLines = upsertTopLevelString(lines, "profile", nextProfileName);
-
-  nextLines = replaceSection(
-    nextLines,
-    `profiles.${settings.openaiProfileName}`,
-    formatManagedEntries(openaiProfileValues, ["model_provider", "model"], {
-      model_provider: "openai",
-      model: settings.openaiModel
-    })
-  );
+  let nextLines = removeTopLevelString(lines, "profile");
+  nextLines = upsertTopLevelString(nextLines, "model_provider", "openai");
+  nextLines = upsertTopLevelString(nextLines, "model", settings.openaiModel);
 
   return nextLines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
@@ -207,11 +214,28 @@ function buildUpdatedConfigText(existingText, options) {
 function detectProviderInfo(configText) {
   const lines = toLines(configText);
   const profile = parseTopLevelString(lines, "profile");
+  const topLevelModelProvider = parseTopLevelString(lines, "model_provider");
 
-  if (!profile || profile === DEFAULTS.openaiProfileName) {
+  if (!profile) {
+    if (!topLevelModelProvider || topLevelModelProvider === "openai") {
+      return {
+        providerId: "openai",
+        profile: DEFAULTS.openaiProfileName,
+        label: "OpenAI"
+      };
+    }
+
+    return {
+      providerId: "custom",
+      profile: "top-level",
+      label: `Provider:${topLevelModelProvider}`
+    };
+  }
+
+  if (profile === DEFAULTS.openaiProfileName) {
     return {
       providerId: "openai",
-      profile: profile || DEFAULTS.openaiProfileName,
+      profile,
       label: "OpenAI"
     };
   }

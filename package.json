@@ -2,7 +2,7 @@
   "name": "codex-session-tools",
   "displayName": "Codex Session Tools",
   "description": "VS Code extension for Codex and Kilo workflows, account rotation, and Codex LB routing helpers.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "oll4com",
   "license": "MIT",
   "repository": {

@@ -50,7 +50,10 @@ const REMOTE_SESSION_ACTIVITY_TIMEOUT_MS = 1800;
 const DEFAULT_CODEX_LOGOUT_TIMEOUT_MS = 20000;
 const FALLBACK_ENV_PATH = path.join(os.homedir(), ".config", "codex-provider.env");
 const CODEX_CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
+const CODEX_STATE_ROOT_DIR = path.join(os.homedir(), ".codex");
+const CODEX_STATE_DB_NAME_PATTERN = /^state_(\d+)\.sqlite$/i;
 const CODEX_SESSION_INDEX_PATH = path.join(os.homedir(), ".codex", "session_index.jsonl");
+const DEFAULT_SQLITE_TIMEOUT_MS = 8000;
 const REMOTE_SESSION_KNOWN_ALIASES_KEY = "remoteSessionKnownAliases";
 const REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY = "remoteSessionFallbackLastTarget";
 const REMOTE_SESSION_ALIAS_ORDER_VERSION_KEY = "remoteSessionAliasOrderVersion";
@@ -112,6 +115,7 @@ let lbStatusLastPayload = null;
 let lbStatusLastError = "";
 let lbModelCacheRefreshInFlight = false;
 let lbModelCacheLastError = "";
+let pendingOpenAiDirectLogin = null;
 
 function execFileJsonSafe(command, args, timeoutMs = DEFAULT_SSH_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
@@ -1382,43 +1386,177 @@ async function fetchCodexLbWeeklyRemainingWithFallback(settings, apiKey) {
   throw lastError || new Error("Codex LB weekly remaining request failed");
 }
 
-function buildCodexLbRouteQuickPickItems(settings, currentMode) {
+function buildCodexLbRouteQuickPickItems(settings, currentMode, currentUpstreamMode, currentProviderId) {
   const upstreams = lbStatusLastPayload && typeof lbStatusLastPayload === "object"
     ? lbStatusLastPayload.upstreams || {}
     : {};
+  const headroomSelected = currentMode === "headroom";
+  const directPrimarySelected = currentMode === "direct" && currentUpstreamMode === "primary";
+  const directAutoSelected = currentMode === "direct" && currentUpstreamMode === "auto";
+  const strictFallbackSelected = currentMode === "direct" && currentUpstreamMode === "fallback";
 
   return [
     {
-      label: "$(plug) Direct",
-      description: currentMode === "direct" ? "current" : "current Codex-LB path",
-      detail: "Use the local router directly against the selected Codex-LB upstream mode.",
-      mode: "direct"
-    },
-    {
       label: "$(rocket) Headroom Gateway",
-      description: currentMode === "headroom" ? "current" : "VM215 compression pilot",
+      description: headroomSelected ? "current path" : "VM215 compression pilot",
       detail: formatCodexLbRoutePickDetail("headroom", upstreams.headroom, settings.codexLbHeadroomBaseUrl),
       mode: "headroom"
     },
     {
-      label: "$(server) Primary",
-      description: currentMode === "primary" ? "current upstream" : "primary LB",
-      detail: formatCodexLbRoutePickDetail("primary", upstreams.primary, settings.codexLbPrimaryBaseUrl),
-      mode: "primary"
+      label: "$(server) Direct .246 Primary",
+      description: directPrimarySelected ? "current path" : "direct VM214 primary",
+      detail: `direct -> primary only (${formatCodexLbRoutePickDetail("primary", upstreams.primary, settings.codexLbPrimaryBaseUrl)})`,
+      mode: "primary-direct"
     },
     {
-      label: "$(split-horizontal) Auto failover",
-      description: currentMode === "auto" ? "current upstream" : "primary then fallback",
-      detail: "Try primary first, then fallback only on configured retry statuses.",
-      mode: "auto"
+      label: "$(split-horizontal) Direct Auto Failover",
+      description: directAutoSelected ? "current path" : ".246 then .234",
+      detail: `direct -> primary then fallback (${settings.codexLbPrimaryBaseUrl} -> ${settings.codexLbFallbackBaseUrl})`,
+      mode: "auto-direct"
     },
     {
-      label: "$(debug-disconnect) Fallback",
-      description: currentMode === "fallback" ? "current upstream" : "standby fallback",
-      detail: formatCodexLbRoutePickDetail("fallback", upstreams.fallback, settings.codexLbFallbackBaseUrl),
-      mode: "fallback"
+      label: "$(plug) Strict .234 Direct",
+      description: strictFallbackSelected ? "current strict route" : "bypass headroom and use only .234",
+      detail: `direct -> fallback only (${settings.codexLbFallbackBaseUrl})`,
+      mode: "fallback-direct"
+    },
+    {
+      label: "$(sign-in) OpenAI / ChatGPT Plus-Pro",
+      description: currentProviderId === "openai" ? "current provider" : "switch provider and sign in directly",
+      detail: "Run the official codex login for your ChatGPT Plus/Pro account, then return to your canonical Codex-LB history.",
+      action: "openai-direct-login"
     }
   ];
+}
+
+async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
+  const { configText, info: current } = await getCurrentProviderInfo();
+  const settings = getSettings();
+  const codexBinaryPath = resolveCodexCliBinaryPath();
+  const terminal = vscode.window.createTerminal({
+    name: "Codex OpenAI Login"
+  });
+
+  let providerChanged = false;
+  let activeProviderInfo = current;
+  let normalizationResult = null;
+  if (current.providerId !== "openai" || current.providerId === "custom") {
+    const nextText = buildUpdatedConfigText(configText, {
+      providerId: "openai",
+      openaiModel: settings.openaiModel
+    });
+    await writeConfigText(DEFAULTS.configPath, nextText);
+    providerChanged = nextText !== configText;
+    activeProviderInfo = detectProviderInfo(nextText);
+    await appendDebugLog(context, outputChannel, "openai-direct-login-provider-written", {
+      previousProviderId: current.providerId,
+      previousProfile: current.profile,
+      nextProviderId: "openai"
+    });
+    if (statusBarItem) {
+      await refreshStatusBar(context, outputChannel, statusBarItem);
+    }
+  }
+
+  normalizationResult = await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
+    currentProviderInfo: activeProviderInfo
+  });
+
+  try {
+    await executeCodexLogout(codexBinaryPath);
+    await appendDebugLog(context, outputChannel, "openai-direct-login-logout-success");
+  } catch (error) {
+    await appendDebugLog(context, outputChannel, "openai-direct-login-logout-skipped", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  let authMtimeMs = 0;
+  try {
+    const authStat = await fs.stat(CODEX_AUTH_FILE);
+    authMtimeMs = Math.round(authStat.mtimeMs);
+  } catch {
+    authMtimeMs = 0;
+  }
+  pendingOpenAiDirectLogin = {
+    authMtimeMs,
+    startedAt: Date.now(),
+    targetHistoryProviderId: "openai"
+  };
+  await appendDebugLog(context, outputChannel, "openai-direct-login-armed", {
+    providerChanged,
+    authMtimeMs,
+    normalizedHistoryRows: normalizationResult && normalizationResult.changed ? normalizationResult.changed : 0
+  });
+
+  terminal.show(true);
+  terminal.sendText(`${shellQuote(codexBinaryPath)} login`, true);
+  await appendDebugLog(context, outputChannel, "openai-direct-login-started", {
+    providerChanged,
+    codexBinaryPath
+  });
+
+  void vscode.window.showInformationMessage(
+    "Started direct ChatGPT Plus/Pro sign-in in the terminal. The task history has been moved to the OpenAI view; after auth.json updates, the extension host will restart automatically."
+  );
+}
+
+async function maybeFinalizePendingOpenAiDirectLogin(context, outputChannel) {
+  if (!pendingOpenAiDirectLogin) {
+    return;
+  }
+
+  let authStat = null;
+  try {
+    authStat = await fs.stat(CODEX_AUTH_FILE);
+  } catch {
+    authStat = null;
+  }
+  if (!authStat) {
+    return;
+  }
+
+  const nextMtimeMs = Math.round(authStat.mtimeMs);
+  if (nextMtimeMs <= Number(pendingOpenAiDirectLogin.authMtimeMs || 0)) {
+    return;
+  }
+
+  const finalizeState = pendingOpenAiDirectLogin;
+  pendingOpenAiDirectLogin = null;
+  let normalizationResult = null;
+
+  try {
+    const { info } = await getCurrentProviderInfo();
+    normalizationResult = await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
+      currentProviderInfo: info,
+      toProviderId: finalizeState.targetHistoryProviderId || "openai"
+    });
+  } catch (error) {
+    await appendDebugLog(context, outputChannel, "openai-direct-login-history-normalize-failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const settings = getSettings();
+  if (settings.autoOpenCodexSidebar) {
+    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, true);
+    await appendDebugLog(context, outputChannel, "openai-direct-login-post-auth-sidebar-armed");
+  }
+  await appendDebugLog(context, outputChannel, "openai-direct-login-auth-updated", {
+    authMtimeMs: nextMtimeMs,
+    normalizedHistoryRows: normalizationResult && normalizationResult.changed ? normalizationResult.changed : 0
+  });
+  void vscode.window.showInformationMessage(
+    "Direct ChatGPT Plus/Pro login completed. Restarting the extension host to load the OpenAI provider with the same task history."
+  );
+  await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "openai-direct-login-restart-after-auth");
+  await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
+}
+
+function formatCodexLbRoutePickMessageLabel(picked) {
+  return String((picked && picked.label) || "")
+    .replace(/\$\([^)]+\)\s*/g, "")
+    .trim() || String((picked && picked.mode) || "route");
 }
 
 function formatCodexLbRoutePickDetail(name, upstream, fallbackText) {
@@ -1803,6 +1941,165 @@ function execFilePromise(command, args, timeout, options = {}) {
       });
     });
   });
+}
+
+function quoteSqlString(value) {
+  return `'${String(value == null ? "" : value).replace(/'/g, "''")}'`;
+}
+
+function isCodexLbProviderInfo(info) {
+  return String(info && info.label || "").trim().toLowerCase() === "provider:codex-lb";
+}
+
+function getTaskHistoryProviderBucketForInfo(info) {
+  if (String(info && info.providerId || "").trim() === "openai") {
+    return "openai";
+  }
+  if (isCodexLbProviderInfo(info)) {
+    return "codex-lb";
+  }
+  return "";
+}
+
+async function findLatestCodexStateDbPath() {
+  let entries = [];
+  try {
+    entries = await fs.readdir(CODEX_STATE_ROOT_DIR, { withFileTypes: true });
+  } catch {
+    return "";
+  }
+
+  const candidates = entries
+    .filter((entry) => entry && typeof entry.isFile === "function" && entry.isFile())
+    .map((entry) => {
+      const match = String(entry.name || "").match(CODEX_STATE_DB_NAME_PATTERN);
+      if (!match) {
+        return null;
+      }
+      return {
+        version: Number(match[1] || 0),
+        dbPath: path.join(CODEX_STATE_ROOT_DIR, entry.name)
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.version - left.version);
+
+  return candidates[0] ? candidates[0].dbPath : "";
+}
+
+async function runSqliteStatement(dbPath, sql, timeoutMs = DEFAULT_SQLITE_TIMEOUT_MS) {
+  return execFilePromise("sqlite3", [dbPath, sql], timeoutMs);
+}
+
+async function backupSqliteDatabase(dbPath) {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const backupPath = `${dbPath}.bak.history-merge-${timestamp}`;
+  await execFilePromise("sqlite3", [dbPath, `.backup ${backupPath}`], DEFAULT_SQLITE_TIMEOUT_MS);
+  try {
+    await fs.chmod(backupPath, 0o600);
+  } catch {
+    // Best effort only.
+  }
+  return backupPath;
+}
+
+function parseLeadingInteger(text) {
+  const match = String(text || "").trim().match(/^(-?\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, options = {}) {
+  const providerInfo = options.currentProviderInfo || null;
+  const toProviderId = String(options.toProviderId || getTaskHistoryProviderBucketForInfo(providerInfo)).trim();
+  const fromProviderIds = Array.isArray(options.fromProviderIds) && options.fromProviderIds.length > 0
+    ? options.fromProviderIds
+    : (options.fromProviderId ? [options.fromProviderId] : ["openai", "codex-lb"]);
+  const sourceProviderIds = Array.from(new Set(
+    fromProviderIds
+      .map((value) => String(value || "").trim())
+      .filter((value) => value && value !== toProviderId)
+  ));
+
+  if (!toProviderId || sourceProviderIds.length === 0) {
+    await appendDebugLog(context, outputChannel, "history-provider-normalize-skipped", {
+      reason: "unsupported-or-already-target-provider",
+      currentProviderLabel: providerInfo ? providerInfo.label : null,
+      fromProviderIds: sourceProviderIds,
+      toProviderId
+    });
+    return {
+      changed: false,
+      skipped: true,
+      reason: "unsupported-or-already-target-provider"
+    };
+  }
+
+  const dbPath = await findLatestCodexStateDbPath();
+  if (!dbPath) {
+    await appendDebugLog(context, outputChannel, "history-provider-normalize-skipped", {
+      reason: "state-db-missing",
+      fromProviderIds: sourceProviderIds,
+      toProviderId
+    });
+    return {
+      changed: false,
+      skipped: true,
+      reason: "state-db-missing"
+    };
+  }
+
+  const sourceProvidersSql = sourceProviderIds.map(quoteSqlString).join(", ");
+  const countSql = [
+    "select count(*)",
+    "from threads",
+    "where source = 'vscode'",
+    "and thread_source = 'user'",
+    `and model_provider in (${sourceProvidersSql});`
+  ].join(" ");
+  const beforeCount = parseLeadingInteger((await runSqliteStatement(dbPath, countSql)).stdout);
+  if (beforeCount <= 0) {
+    await appendDebugLog(context, outputChannel, "history-provider-normalize-noop", {
+      dbPath,
+      fromProviderIds: sourceProviderIds,
+      toProviderId,
+      beforeCount
+    });
+    return {
+      changed: false,
+      skipped: false,
+      beforeCount,
+      dbPath
+    };
+  }
+
+  const backupPath = await backupSqliteDatabase(dbPath);
+  const updateSql = [
+    "begin immediate;",
+    "update threads",
+    `set model_provider = ${quoteSqlString(toProviderId)}`,
+    "where source = 'vscode'",
+    "and thread_source = 'user'",
+    `and model_provider in (${sourceProvidersSql});`,
+    "select changes();",
+    "commit;"
+  ].join(" ");
+  const changed = parseLeadingInteger((await runSqliteStatement(dbPath, updateSql)).stdout);
+
+  await appendDebugLog(context, outputChannel, "history-provider-normalized", {
+    dbPath,
+    backupPath,
+    fromProviderIds: sourceProviderIds,
+    toProviderId,
+    beforeCount,
+    changed
+  });
+  return {
+    changed,
+    skipped: false,
+    beforeCount,
+    backupPath,
+    dbPath
+  };
 }
 
 function formatCodexLbErrorMessage(error) {
@@ -3708,8 +4005,9 @@ async function showCodexLbStatusCommand(context, outputChannel) {
   }
 }
 
-async function selectCodexLbRouteCommand(context, outputChannel) {
+async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem = null) {
   const settings = getSettings();
+  let currentProviderId = "custom";
   try {
     const statusResponse = await fetchJsonResponse(getCodexLbStatusUrl(settings));
     lbStatusLastPayload = statusResponse.json;
@@ -3717,18 +4015,30 @@ async function selectCodexLbRouteCommand(context, outputChannel) {
   } catch (error) {
     lbStatusLastError = formatCodexLbErrorMessage(error);
   }
+  try {
+    const providerInfo = await getCurrentProviderInfo();
+    currentProviderId = String(providerInfo && providerInfo.info && providerInfo.info.providerId || "custom").trim() || "custom";
+  } catch {
+    currentProviderId = "custom";
+  }
 
-  const currentMode = getSelectedCodexLbRouteMode(settings);
-  const items = buildCodexLbRouteQuickPickItems(settings, currentMode);
+  const routeState = getCodexLbRouteState(settings);
+  const currentMode = routeState.routeMode || "direct";
+  const items = buildCodexLbRouteQuickPickItems(settings, currentMode, routeState.mode || "primary", currentProviderId);
   const picked = await vscode.window.showQuickPick(items, {
     title: "Select Codex LB route",
-    placeHolder: "Choose which Codex-LB the local editor proxy should use",
+    placeHolder: "Choose Codex LB routing or switch to direct ChatGPT Plus/Pro sign-in",
     ignoreFocusOut: true,
     matchOnDescription: true,
     matchOnDetail: true
   });
 
   if (!picked) {
+    return;
+  }
+
+  if (picked.action === "openai-direct-login") {
+    await startOpenAiDirectLogin(context, outputChannel, statusBarItem);
     return;
   }
 
@@ -3748,7 +4058,7 @@ async function selectCodexLbRouteCommand(context, outputChannel) {
     });
 
     const choice = await vscode.window.showInformationMessage(
-      `Codex LB route selected: ${picked.mode}. ${formatCodexLbRouteLine(settings)}`,
+      `Codex LB route selected: ${formatCodexLbRoutePickMessageLabel(picked)}. ${formatCodexLbRouteLine(settings)}`,
       "Show Status",
       "Open Dashboard"
     );
@@ -4715,7 +5025,7 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
     return;
   }
   if (selection.id === "select-codex-lb-route") {
-    await selectCodexLbRouteCommand(context, outputChannel);
+    await selectCodexLbRouteCommand(context, outputChannel, statusBarItem);
     return;
   }
   if (selection.id === "open-codex-lb-dashboard") {
@@ -4823,6 +5133,9 @@ async function switchProvider(context, outputChannel, statusBarItem) {
     nextLabel: nextInfo.label
   });
   await refreshStatusBar(context, outputChannel, statusBarItem);
+  await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
+    currentProviderInfo: nextInfo
+  });
 
   if (settings.autoOpenCodexSidebar) {
     await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, true);
@@ -4841,21 +5154,39 @@ async function switchProvider(context, outputChannel, statusBarItem) {
 }
 
 function registerConfigWatchers(context, outputChannel, statusBarItem, metricsStatusBarItem) {
-  const watcher = vscode.workspace.createFileSystemWatcher(
+  const configWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(path.dirname(DEFAULTS.configPath), path.basename(DEFAULTS.configPath))
   );
+  const authWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(path.dirname(CODEX_AUTH_FILE), path.basename(CODEX_AUTH_FILE))
+  );
   context.subscriptions.push(
-    watcher,
-    watcher.onDidChange(() => {
+    configWatcher,
+    authWatcher,
+    configWatcher.onDidChange(() => {
       void appendDebugLog(context, outputChannel, "config-file-changed");
       void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
     }),
-    watcher.onDidCreate(() => {
+    configWatcher.onDidCreate(() => {
       void appendDebugLog(context, outputChannel, "config-file-created");
       void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
     }),
-    watcher.onDidDelete(() => {
+    configWatcher.onDidDelete(() => {
       void appendDebugLog(context, outputChannel, "config-file-deleted");
+      void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+    }),
+    authWatcher.onDidChange(() => {
+      void appendDebugLog(context, outputChannel, "auth-file-changed");
+      void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+      void maybeFinalizePendingOpenAiDirectLogin(context, outputChannel);
+    }),
+    authWatcher.onDidCreate(() => {
+      void appendDebugLog(context, outputChannel, "auth-file-created");
+      void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+      void maybeFinalizePendingOpenAiDirectLogin(context, outputChannel);
+    }),
+    authWatcher.onDidDelete(() => {
+      void appendDebugLog(context, outputChannel, "auth-file-deleted");
       void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
     })
   );
@@ -4929,7 +5260,7 @@ function activate(context) {
       refreshCodexLbModelsCommand(context, outputChannel, { silent: false })
     ),
     vscode.commands.registerCommand("codexProviderStatusbar.selectCodexLbRoute", () =>
-      selectCodexLbRouteCommand(context, outputChannel)
+      selectCodexLbRouteCommand(context, outputChannel, statusBarItem)
     ),
     vscode.commands.registerCommand("codexProviderStatusbar.openCodexLbDashboard", () =>
       openCodexLbDashboardCommand(context, outputChannel)
@@ -4986,6 +5317,18 @@ function activate(context) {
   void heartbeatRemoteSessionAlias(context, outputChannel, "activate");
   registerConfigWatchers(context, outputChannel, statusBarItem, metricsStatusBarItem);
   void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+  void (async () => {
+    try {
+      const { info } = await getCurrentProviderInfo();
+      await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
+        currentProviderInfo: info
+      });
+    } catch (error) {
+      await appendDebugLog(context, outputChannel, "history-provider-normalize-activate-failed", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
   void refreshCodexLbUsageCommand(context, outputChannel, { silent: true });
   void refreshCodexLbModelsCommand(context, outputChannel, { silent: true });
   const refreshTimer = setInterval(() => {
