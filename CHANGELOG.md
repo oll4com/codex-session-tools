@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 - 2026-06-17
+
+- Added a `Clear task history` action that removes local Codex task history data and reloads the window for a clean sidebar refresh.
+- Expanded local history cleanup to remove Codex session index entries, rollout files, shell snapshots, and matching VS Code thread rows instead of clearing only the database rows.
+- Fixed remote SSH window opening so root-only targets fall back to the current project path and avoid triggering Codex's missing-project state.
+- Prevented duplicate post-restart Codex sidebar open attempts and removed noisy reload success logging after the extension host is already shutting down.
+- Disabled remote-session presence sync by default so installs without a dedicated presence host do not spam `codex-usage-host` SSH warnings on startup.
+
 ## 0.2.1 - 2026-06-16
 
 - Added clearer Codex LB route labels for headroom, direct primary, auto failover, and strict `.234` direct selection.

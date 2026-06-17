@@ -53,6 +53,8 @@ const CODEX_CONFIG_PATH = path.join(os.homedir(), ".codex", "config.toml");
 const CODEX_STATE_ROOT_DIR = path.join(os.homedir(), ".codex");
 const CODEX_STATE_DB_NAME_PATTERN = /^state_(\d+)\.sqlite$/i;
 const CODEX_SESSION_INDEX_PATH = path.join(os.homedir(), ".codex", "session_index.jsonl");
+const CODEX_SESSIONS_ROOT_DIR = path.join(CODEX_STATE_ROOT_DIR, "sessions");
+const CODEX_SHELL_SNAPSHOTS_DIR = path.join(CODEX_STATE_ROOT_DIR, "shell_snapshots");
 const DEFAULT_SQLITE_TIMEOUT_MS = 8000;
 const REMOTE_SESSION_KNOWN_ALIASES_KEY = "remoteSessionKnownAliases";
 const REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY = "remoteSessionFallbackLastTarget";
@@ -63,13 +65,13 @@ const REMOTE_SESSION_WORKSPACE_ALIAS_KEY = "remoteSessionWorkspaceAlias";
 const REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY = "remoteSessionWorkspaceAliasSource";
 const REMOTE_SESSION_ALIAS_REGISTRY_DIR = "remote-session-aliases";
 const REMOTE_SESSION_ALIAS_ORDER_VERSION = "remote-alias-source-trust-20260424";
-const DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS = "codex-usage-host";
+const DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS = "";
 const DEFAULT_REMOTE_SESSION_PRESENCE_DIR = "/var/tmp/codex-session-tools/ssh-sessions";
 const REMOTE_SESSION_PRESENCE_SYNC_TIMEOUT_MS = 5000;
 const REMOTE_SESSION_PRESENCE_SYNC_MIN_INTERVAL_MS = 20 * 1000;
 const STATUSBAR_LAST_ACCOUNT_ID_KEY = "statusBarLastAccountId";
 const DEFAULT_REMOTE_SESSION_ALIAS = "codex-dev";
-const DEFAULT_REMOTE_SESSION_PATH = "/";
+const DEFAULT_REMOTE_SESSION_PATH = os.homedir();
 const DEFAULT_REMOTE_SESSION_MAX_INDEX = 5;
 const COMMAND_CHAIN_STEP_DELAY_MS = 60;
 const SCREEN_CAPTURE_DIR_NAME = "codex-screen-captures";
@@ -105,6 +107,8 @@ let remoteSessionInstanceId = "";
 let remoteSessionStartedAt = new Date().toISOString();
 let lastRemoteSessionPresenceSyncAtMs = 0;
 let lastRemoteSessionPresenceSyncSignature = "";
+let remoteSessionPresenceSyncSuppressedAlias = "";
+let remoteSessionPresenceSyncSuppressedMessage = "";
 let lbUsageRefreshTimer = null;
 let lbUsageStatusBarItem = null;
 let lbUsageRefreshInFlight = false;
@@ -156,8 +160,49 @@ function shellQuote(value) {
   return `'${String(value == null ? "" : value).replace(/'/g, `'\\''`)}'`;
 }
 
+function isMissingFileError(error) {
+  return Boolean(error && typeof error === "object" && error.code === "ENOENT");
+}
+
 function looksLikeRemoteSessionAlias(candidate) {
   return /^codex-dev(?:\d+)?$/i.test(String(candidate || "").trim());
+}
+
+function isUsableCodexProjectPath(candidatePath) {
+  const normalizedPath = String(candidatePath || "").trim();
+  return Boolean(normalizedPath)
+    && normalizedPath !== "/"
+    && normalizedPath !== "~"
+    && normalizedPath !== "/~";
+}
+
+function getWorkspaceFolderPaths() {
+  return (vscode.workspace.workspaceFolders || [])
+    .map((folder) => {
+      if (!folder || !folder.uri) {
+        return "";
+      }
+      return String(folder.uri.path || folder.uri.fsPath || "").trim();
+    })
+    .filter(Boolean);
+}
+
+function getCurrentWorkspaceProjectPath() {
+  const workspacePath = getWorkspaceFolderPaths().find(isUsableCodexProjectPath);
+  if (workspacePath) {
+    return workspacePath;
+  }
+
+  const activeUri = vscode.window.activeTextEditor && vscode.window.activeTextEditor.document
+    ? vscode.window.activeTextEditor.document.uri
+    : null;
+  const activePath = activeUri ? String(activeUri.path || activeUri.fsPath || "").trim() : "";
+  if (!activePath) {
+    return "";
+  }
+
+  const activeDirectory = path.posix.dirname(activePath);
+  return isUsableCodexProjectPath(activeDirectory) ? activeDirectory : "";
 }
 
 function isWorkspaceBackedRemoteSessionAliasSource(source) {
@@ -704,6 +749,25 @@ async function buildRemoteSessionPresencePayload(context, alias, aliasSource, re
   };
 }
 
+function resolveRemoteSessionPresenceSettings(settings) {
+  const syncAlias = String(
+    settings && Object.prototype.hasOwnProperty.call(settings, "remoteSessionPresenceAlias")
+      ? settings.remoteSessionPresenceAlias
+      : DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS
+  ).trim();
+  const syncDir = String(
+    settings && Object.prototype.hasOwnProperty.call(settings, "remoteSessionPresenceDir")
+      ? settings.remoteSessionPresenceDir
+      : DEFAULT_REMOTE_SESSION_PRESENCE_DIR
+  ).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_DIR;
+
+  return {
+    enabled: Boolean(syncAlias),
+    syncAlias,
+    syncDir
+  };
+}
+
 async function syncRemoteSessionPresence(context, outputChannel, alias, aliasSource, reason = "heartbeat") {
   const normalizedAlias = String(alias || "").trim();
   const normalizedSource = normalizeRemoteSessionAliasSource(aliasSource);
@@ -713,8 +777,22 @@ async function syncRemoteSessionPresence(context, outputChannel, alias, aliasSou
   }
 
   const settings = getSettings();
-  const syncAlias = String(settings.remoteSessionPresenceAlias || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS;
-  const syncDir = String(settings.remoteSessionPresenceDir || DEFAULT_REMOTE_SESSION_PRESENCE_DIR).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_DIR;
+  const { enabled: presenceSyncEnabled, syncAlias, syncDir } = resolveRemoteSessionPresenceSettings(settings);
+  if (!presenceSyncEnabled) {
+    return false;
+  }
+  if (syncAlias === remoteSessionPresenceSyncSuppressedAlias && remoteSessionPresenceSyncSuppressedMessage) {
+    if (reason !== "heartbeat") {
+      await appendDebugLog(context, outputChannel, "remote-session-presence-sync-suppressed", {
+        alias: normalizedAlias,
+        aliasSource: normalizedSource,
+        syncAlias,
+        reason,
+        message: remoteSessionPresenceSyncSuppressedMessage
+      });
+    }
+    return false;
+  }
   const payload = await buildRemoteSessionPresencePayload(context, normalizedAlias, normalizedSource, reason);
   const signature = JSON.stringify([
     payload.alias,
@@ -769,13 +847,26 @@ async function syncRemoteSessionPresence(context, outputChannel, alias, aliasSou
     }
     return true;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/could not resolve hostname/i.test(message)) {
+      remoteSessionPresenceSyncSuppressedAlias = syncAlias;
+      remoteSessionPresenceSyncSuppressedMessage = message;
+      await appendDebugLog(context, outputChannel, "remote-session-presence-sync-disabled", {
+        alias: normalizedAlias,
+        aliasSource: normalizedSource,
+        sessionId: payload.sessionId,
+        syncAlias,
+        reason,
+        message
+      });
+    }
     await appendDebugLog(context, outputChannel, "remote-session-presence-sync-failed", {
       alias: normalizedAlias,
       aliasSource: normalizedSource,
       sessionId: payload.sessionId,
       syncAlias,
       reason,
-      message: error instanceof Error ? error.message : String(error)
+      message
     });
     return false;
   }
@@ -787,8 +878,10 @@ async function removeRemoteSessionPresence(context, outputChannel, reason = "dea
     return false;
   }
   const settings = getSettings();
-  const syncAlias = String(settings.remoteSessionPresenceAlias || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS;
-  const syncDir = String(settings.remoteSessionPresenceDir || DEFAULT_REMOTE_SESSION_PRESENCE_DIR).trim() || DEFAULT_REMOTE_SESSION_PRESENCE_DIR;
+  const { enabled: presenceSyncEnabled, syncAlias, syncDir } = resolveRemoteSessionPresenceSettings(settings);
+  if (!presenceSyncEnabled) {
+    return false;
+  }
   const remoteFilePath = `${syncDir}/${encodeURIComponent(sessionId)}.json`;
   const remoteScript = [
     "set -euo pipefail",
@@ -1692,16 +1785,19 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   const shouldOpen = context.globalState.get(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
   const settings = getSettings();
   const workspaceAlias = String(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_KEY, "") || "").trim();
+  const workspaceProjectPath = getCurrentWorkspaceProjectPath();
   const shouldOpenBlankRemoteWindow = !shouldOpen
     && settings.autoOpenCodexSidebar
     && looksLikeRemoteSessionAlias(workspaceAlias)
+    && Boolean(workspaceProjectPath)
     && !vscode.window.activeTextEditor
     && vscode.window.visibleTextEditors.length === 0;
 
   if (!shouldOpen && !shouldOpenBlankRemoteWindow) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip", {
       workspaceAlias: workspaceAlias || null,
-      blankWindowFallbackEligible: shouldOpenBlankRemoteWindow
+      blankWindowFallbackEligible: shouldOpenBlankRemoteWindow,
+      workspaceProjectPath: workspaceProjectPath || null
     });
     return;
   }
@@ -1717,6 +1813,7 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
     detectedCurrentAlias: detectCurrentSshAlias(),
     remoteName: String(vscode.env.remoteName || ""),
     workspaceAlias: workspaceAlias || null,
+    workspaceProjectPath: workspaceProjectPath || null,
     openedBecauseBlankWindow: shouldOpenBlankRemoteWindow,
     lastRotationTarget: context.globalState.get(ROTATION_LAST_TARGET_KEY, null),
     lastRotationCurrent: context.globalState.get(ROTATION_LAST_CURRENT_KEY, null),
@@ -1724,7 +1821,7 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   };
   await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-request", debugPayload);
 
-  let sidebarOpenTriggered = false;
+  let sidebarOpenState = "idle";
   for (const delayMs of [0, 1200, 4000]) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-scheduled", {
       ...debugPayload,
@@ -1732,9 +1829,10 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
     });
     setTimeout(() => {
       void (async () => {
-        if (sidebarOpenTriggered) {
+        if (sidebarOpenState !== "idle") {
           return;
         }
+        sidebarOpenState = "opening";
         try {
           await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-attempt", {
             ...debugPayload,
@@ -1744,12 +1842,13 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
           if (!opened) {
             throw new Error("No Codex sidebar command matched");
           }
+          sidebarOpenState = "done";
           await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-dispatched", {
             ...debugPayload,
             delayMs
           });
-          sidebarOpenTriggered = true;
         } catch (error) {
+          sidebarOpenState = "idle";
           await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-failed", {
             ...debugPayload,
             delayMs,
@@ -2100,6 +2199,332 @@ async function normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel,
     backupPath,
     dbPath
   };
+}
+
+async function listVsCodeTaskHistoryThreads(dbPath) {
+  const listSql = [
+    "select id || char(31) || coalesce(rollout_path, '')",
+    "from threads",
+    "where source = 'vscode'",
+    "and thread_source = 'user';"
+  ].join(" ");
+  return String((await runSqliteStatement(dbPath, listSql)).stdout || "")
+    .split(/\r?\n/)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, rolloutPath = ""] = line.split("\u001f");
+      return {
+        id: String(id || "").trim(),
+        rolloutPath: String(rolloutPath || "").trim()
+      };
+    })
+    .filter((thread) => thread.id);
+}
+
+async function clearVsCodeTaskHistoryThreads(dbPath, threadIds) {
+  const normalizedIds = Array.from(new Set(
+    Array.from(threadIds || [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  ));
+  if (normalizedIds.length <= 0) {
+    return;
+  }
+
+  const tempTableSql = normalizedIds
+    .map((id, index) => `${index === 0 ? "select" : "union all select"} ${quoteSqlString(id)} as id`)
+    .join(" ");
+  const clearSql = [
+    "pragma foreign_keys = on;",
+    "begin immediate;",
+    `create temp table codex_threads_to_clear as ${tempTableSql};`,
+    "delete from thread_spawn_edges",
+    "where parent_thread_id in (select id from codex_threads_to_clear)",
+    "or child_thread_id in (select id from codex_threads_to_clear);",
+    "delete from threads",
+    "where id in (select id from codex_threads_to_clear);",
+    "drop table codex_threads_to_clear;",
+    "commit;"
+  ].join(" ");
+  await runSqliteStatement(dbPath, clearSql);
+}
+
+async function readCodexSessionIndexEntries() {
+  let rawText = "";
+  try {
+    rawText = await fs.readFile(CODEX_SESSION_INDEX_PATH, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  return String(rawText || "")
+    .split(/\r?\n/)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        const parsed = JSON.parse(line);
+        return {
+          line,
+          id: String(parsed && parsed.id || "").trim()
+        };
+      } catch {
+        return {
+          line,
+          id: ""
+        };
+      }
+    });
+}
+
+async function removeCodexSessionIndexEntries(threadIds) {
+  const entries = await readCodexSessionIndexEntries();
+  if (entries.length <= 0) {
+    return {
+      beforeCount: 0,
+      afterCount: 0,
+      removedCount: 0
+    };
+  }
+
+  const normalizedIds = new Set(
+    Array.from(threadIds || [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  const keptLines = [];
+  let removedCount = 0;
+  for (const entry of entries) {
+    if (entry.id && normalizedIds.has(entry.id)) {
+      removedCount += 1;
+      continue;
+    }
+    keptLines.push(entry.line);
+  }
+
+  if (removedCount > 0) {
+    await fs.writeFile(
+      CODEX_SESSION_INDEX_PATH,
+      keptLines.length > 0 ? `${keptLines.join("\n")}\n` : "",
+      "utf8"
+    );
+  }
+
+  return {
+    beforeCount: entries.length,
+    afterCount: keptLines.length,
+    removedCount
+  };
+}
+
+async function collectMatchingFiles(rootDir, predicate) {
+  const matches = [];
+  const pending = [rootDir];
+
+  while (pending.length > 0) {
+    const currentDir = pending.pop();
+    let entries = [];
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry) {
+        continue;
+      }
+      const entryPath = path.join(currentDir, entry.name);
+      if (typeof entry.isDirectory === "function" && entry.isDirectory()) {
+        pending.push(entryPath);
+        continue;
+      }
+      if (typeof entry.isFile === "function" && entry.isFile() && predicate(entry.name, entryPath)) {
+        matches.push(entryPath);
+      }
+    }
+  }
+
+  return matches;
+}
+
+async function collectCodexRolloutFiles(threadIds, explicitRolloutPaths = []) {
+  const normalizedIds = Array.from(new Set(
+    Array.from(threadIds || [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  ));
+  const rolloutFiles = new Set(
+    Array.isArray(explicitRolloutPaths)
+      ? explicitRolloutPaths
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+      : []
+  );
+  if (normalizedIds.length <= 0) {
+    return Array.from(rolloutFiles);
+  }
+
+  const discovered = await collectMatchingFiles(
+    CODEX_SESSIONS_ROOT_DIR,
+    (entryName) => entryName.startsWith("rollout-")
+      && entryName.endsWith(".jsonl")
+      && normalizedIds.some((threadId) => entryName.includes(threadId))
+  );
+  for (const filePath of discovered) {
+    rolloutFiles.add(filePath);
+  }
+  return Array.from(rolloutFiles);
+}
+
+async function collectCodexShellSnapshotFiles(threadIds) {
+  const normalizedIds = new Set(
+    Array.from(threadIds || [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  if (normalizedIds.size <= 0) {
+    return [];
+  }
+
+  let entries = [];
+  try {
+    entries = await fs.readdir(CODEX_SHELL_SNAPSHOTS_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  return entries
+    .filter((entry) => entry && typeof entry.isFile === "function" && entry.isFile())
+    .map((entry) => entry.name)
+    .filter((entryName) => Array.from(normalizedIds).some((threadId) => entryName.startsWith(`${threadId}.`)))
+    .map((entryName) => path.join(CODEX_SHELL_SNAPSHOTS_DIR, entryName));
+}
+
+async function deleteFiles(filePaths) {
+  const removedPaths = [];
+  const uniquePaths = Array.from(new Set(
+    Array.isArray(filePaths)
+      ? filePaths.map((value) => String(value || "").trim()).filter(Boolean)
+      : []
+  ));
+
+  for (const filePath of uniquePaths) {
+    try {
+      await fs.unlink(filePath);
+      removedPaths.push(filePath);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return removedPaths;
+}
+
+async function clearCodexTaskHistoryCommand(context, outputChannel) {
+  const dbPath = await findLatestCodexStateDbPath();
+  const dbThreads = dbPath ? await listVsCodeTaskHistoryThreads(dbPath) : [];
+  const sessionIndexEntries = await readCodexSessionIndexEntries();
+  const workspaceProjectPath = getCurrentWorkspaceProjectPath();
+  const workspaceFolderPaths = getWorkspaceFolderPaths();
+  const threadIdsToClear = new Set([
+    ...dbThreads.map((thread) => thread.id),
+    ...sessionIndexEntries.map((entry) => entry.id).filter(Boolean)
+  ]);
+
+  if (threadIdsToClear.size <= 0) {
+    await appendDebugLog(context, outputChannel, "task-history-clear-noop", {
+      dbPath,
+      dbThreadCount: dbThreads.length,
+      sessionIndexCount: sessionIndexEntries.length
+    });
+    void vscode.window.showInformationMessage("Δεν υπάρχουν τοπικά Codex tasks για καθάρισμα.");
+    return;
+  }
+
+  const beforeCount = threadIdsToClear.size;
+  await appendDebugLog(context, outputChannel, "task-history-clear-start", {
+    dbPath,
+    beforeCount,
+    dbThreadCount: dbThreads.length,
+    sessionIndexCount: sessionIndexEntries.length,
+    workspaceProjectPath: workspaceProjectPath || null,
+    workspaceFolderPaths
+  });
+
+  // Codex rehydrates sidebar tasks from the session index and rollout files, not just the state DB.
+  const removedSessionIndex = await removeCodexSessionIndexEntries(threadIdsToClear);
+  const removedRolloutFiles = await deleteFiles(
+    await collectCodexRolloutFiles(
+      threadIdsToClear,
+      dbThreads.map((thread) => thread.rolloutPath).filter(Boolean)
+    )
+  );
+  const removedShellSnapshots = await deleteFiles(await collectCodexShellSnapshotFiles(threadIdsToClear));
+  if (dbPath) {
+    await clearVsCodeTaskHistoryThreads(dbPath, threadIdsToClear);
+  }
+
+  const remainingDbThreads = dbPath ? await listVsCodeTaskHistoryThreads(dbPath) : [];
+  const remainingSessionIndexEntries = await readCodexSessionIndexEntries();
+  const afterCount = new Set([
+    ...remainingDbThreads.map((thread) => thread.id),
+    ...remainingSessionIndexEntries.map((entry) => entry.id).filter(Boolean)
+  ]).size;
+  const clearedCount = Math.max(0, beforeCount - afterCount);
+
+  await appendDebugLog(context, outputChannel, "task-history-cleared", {
+    dbPath,
+    beforeCount,
+    afterCount,
+    clearedCount,
+    removedSessionIndexEntries: removedSessionIndex.removedCount,
+    removedRolloutFiles: removedRolloutFiles.length,
+    removedShellSnapshots: removedShellSnapshots.length,
+    workspaceProjectPath: workspaceProjectPath || null,
+    workspaceFolderPaths
+  });
+
+  const shouldReopenSidebarAfterReload = Boolean(workspaceProjectPath);
+  await context.globalState.update(
+    OPEN_SIDEBAR_AFTER_RESTART_KEY,
+    shouldReopenSidebarAfterReload
+  );
+
+  if (!shouldReopenSidebarAfterReload) {
+    await appendDebugLog(context, outputChannel, "task-history-cleared-missing-project", {
+      workspaceFolderPaths
+    });
+    const visiblePath = workspaceFolderPaths[0] || "/";
+    void vscode.window.showWarningMessage(
+      `Καθαρίστηκαν ${clearedCount} Codex tasks. Γίνεται reload τώρα, αλλά το τωρινό window είναι ανοιχτό στο ${visiblePath} και το Codex χρειάζεται project folder για νέο task.`
+    );
+  } else {
+    void vscode.window.showInformationMessage(
+      `Καθαρίστηκαν ${clearedCount} Codex tasks. Γίνεται reload του window...`
+    );
+  }
+
+  await appendDebugLog(context, outputChannel, "task-history-reload-window", {
+    clearedCount,
+    shouldReopenSidebarAfterReload,
+    workspaceProjectPath: workspaceProjectPath || null,
+    workspaceFolderPaths
+  });
+  await reloadWindowCommand(context, outputChannel);
 }
 
 function formatCodexLbErrorMessage(error) {
@@ -3200,9 +3625,6 @@ async function reloadWindowCommand(context, outputChannel) {
   try {
     await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "reload-window");
     await vscode.commands.executeCommand("workbench.action.reloadWindow");
-    await appendDebugLog(context, outputChannel, "reload-window-command-success", {
-      mode: "reload-window"
-    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await appendDebugLog(context, outputChannel, "reload-window-command-fallback", {
@@ -4155,11 +4577,33 @@ function normalizeRemotePath(inputPath) {
     return DEFAULT_REMOTE_SESSION_PATH;
   }
 
-  if (rawValue.startsWith("/")) {
-    return rawValue;
+  if (rawValue === "~") {
+    return path.posix.normalize(String(os.homedir() || "/"));
   }
 
-  return `/${rawValue}`;
+  if (rawValue.startsWith("~/")) {
+    return path.posix.join(String(os.homedir() || "/"), rawValue.slice(2));
+  }
+
+  if (rawValue.startsWith("/")) {
+    return path.posix.normalize(rawValue);
+  }
+
+  return path.posix.normalize(`/${rawValue}`);
+}
+
+function resolveRemoteSessionOpenPath(inputPath) {
+  const configuredPath = normalizeRemotePath(inputPath);
+  if (isUsableCodexProjectPath(configuredPath)) {
+    return configuredPath;
+  }
+
+  const workspaceProjectPath = getCurrentWorkspaceProjectPath();
+  if (isUsableCodexProjectPath(workspaceProjectPath)) {
+    return normalizeRemotePath(workspaceProjectPath);
+  }
+
+  return normalizeRemotePath(os.homedir());
 }
 
 function detectCurrentSshAliasDetails() {
@@ -4311,7 +4755,7 @@ async function selectRemoteSessionAlias(context, outputChannel, settings, nextRe
   const series = resolveRemoteSeriesSettings(settings, currentAlias);
   const aliasCandidates = buildRemoteAliasCandidates(series.prefix, series.maxIndex);
   const suggestedAlias = String((nextRemote && nextRemote.targetAlias) || "").trim();
-  const remotePath = normalizeRemotePath(settings.remoteSessionOpenPath);
+  const remotePath = resolveRemoteSessionOpenPath(settings.remoteSessionOpenPath);
 
   const selection = await vscode.window.showQuickPick(
     aliasCandidates.map((alias) => {
@@ -4757,7 +5201,7 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
   const openMode = nextRemote && nextRemote.mode
     ? `manual-select:${nextRemote.mode}`
     : "manual-select";
-  const remotePath = normalizeRemotePath(settings.remoteSessionOpenPath);
+  const remotePath = resolveRemoteSessionOpenPath(settings.remoteSessionOpenPath);
   const remoteUri = vscode.Uri.parse(
     `vscode-remote://ssh-remote+${encodeURIComponent(targetAlias)}${remotePath}`
   );
@@ -4922,6 +5366,11 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
         description: "Open provider-statusbar.log."
       },
       {
+        id: "clear-task-history",
+        label: "Clear task history",
+        description: "Delete local Codex task history immediately from local Codex state files."
+      },
+      {
         id: "reload-window",
         label: "Reload window",
         description: "Reload VS Code window (compat command: codexProviderStatusbar.reloadWindow)."
@@ -4998,6 +5447,10 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
   }
   if (selection.id === "show-debug-log") {
     await vscode.commands.executeCommand("codexProviderStatusbar.showDebugLog");
+    return;
+  }
+  if (selection.id === "clear-task-history") {
+    await clearCodexTaskHistoryCommand(context, outputChannel);
     return;
   }
   if (selection.id === "reload-window") {
@@ -5280,6 +5733,9 @@ function activate(context) {
         void vscode.window.showWarningMessage("Δεν μπόρεσα να ανοίξω το Codex sidebar.");
       }
     }),
+    vscode.commands.registerCommand("codexProviderStatusbar.clearTaskHistory", () =>
+      clearCodexTaskHistoryCommand(context, outputChannel)
+    ),
     vscode.commands.registerCommand("codexProviderStatusbar.newCodexThread", async () => {
       const opened = await openCodexSidebarBestEffort(context, outputChannel);
       if (!opened) {

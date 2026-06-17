@@ -2,7 +2,7 @@
   "name": "codex-session-tools",
   "displayName": "Codex Session Tools",
   "description": "VS Code extension for Codex and Kilo workflows, account rotation, and Codex LB routing helpers.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "oll4com",
   "license": "MIT",
   "repository": {
@@ -60,6 +60,7 @@
     "onCommand:codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt",
     "onCommand:codexProviderStatusbar.openNextRemoteSession",
     "onCommand:codexProviderStatusbar.openCodexSidebar",
+    "onCommand:codexProviderStatusbar.clearTaskHistory",
     "onCommand:codexProviderStatusbar.newCodexThread"
   ],
   "main": "./extension.js",
@@ -203,6 +204,11 @@
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "codexProviderStatusbar.clearTaskHistory",
+        "title": "Codex Session Tools: Clear Task History",
+        "icon": "$(trash)"
+      },
+      {
         "command": "codexProviderStatusbar.newCodexThread",
         "title": "Codex Session Tools: New Codex Thread",
         "icon": "$(plus)"
@@ -239,6 +245,11 @@
 					"command": "codexProviderStatusbar.selectCodexLbRoute",
 					"when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
 					"group": "navigation@5"
+				},
+				{
+					"command": "codexProviderStatusbar.clearTaskHistory",
+					"when": "view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+					"group": "navigation@6"
 				}
 			],
 			"editor/title": [
@@ -341,6 +352,9 @@
           "command": "codexProviderStatusbar.openCodexSidebar"
         },
         {
+          "command": "codexProviderStatusbar.clearTaskHistory"
+        },
+        {
           "command": "codexProviderStatusbar.newCodexThread"
         }
       ]
@@ -430,15 +444,15 @@
         },
         "codexProviderStatusbar.remoteSessionOpenPath": {
           "type": "string",
-          "default": "/",
+          "default": "~",
           "scope": "application",
-          "description": "Remote path opened in the new SSH window for 'Open Next Remote Session'."
+          "description": "Remote path opened in the new SSH window for 'Open Next Remote Session'. Root-only values fall back to the current project path, otherwise the remote home directory."
         },
         "codexProviderStatusbar.remoteSessionPresenceAlias": {
           "type": "string",
-          "default": "codex-usage-host",
+          "default": "",
           "scope": "application",
-          "description": "SSH alias used to publish live remote-session presence metadata."
+          "description": "SSH alias used to publish live remote-session presence metadata. Disabled by default; set an alias explicitly to enable presence sync."
         },
         "codexProviderStatusbar.remoteSessionPresenceDir": {
           "type": "string",
