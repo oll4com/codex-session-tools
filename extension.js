@@ -71,7 +71,7 @@ const REMOTE_SESSION_PRESENCE_SYNC_TIMEOUT_MS = 5000;
 const REMOTE_SESSION_PRESENCE_SYNC_MIN_INTERVAL_MS = 20 * 1000;
 const STATUSBAR_LAST_ACCOUNT_ID_KEY = "statusBarLastAccountId";
 const DEFAULT_REMOTE_SESSION_ALIAS = "codex-dev";
-const DEFAULT_REMOTE_SESSION_PATH = os.homedir();
+const DEFAULT_REMOTE_SESSION_PATH = "/etc";
 const DEFAULT_REMOTE_SESSION_MAX_INDEX = 5;
 const COMMAND_CHAIN_STEP_DELAY_MS = 60;
 const SCREEN_CAPTURE_DIR_NAME = "codex-screen-captures";
@@ -1404,6 +1404,72 @@ function buildCodexLbUsageTooltip(settings) {
   return tooltip;
 }
 
+function readCurrentProviderIdForStatusItems() {
+  try {
+    const configText = fsSync.readFileSync(CODEX_CONFIG_PATH, "utf8");
+    const info = detectProviderInfo(configText);
+    return String(info && info.providerId || "").trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function shouldSkipCodexLbBackgroundRefresh(options = {}) {
+  if (!options.silent || options.force) {
+    return false;
+  }
+  return readCurrentProviderIdForStatusItems() === "openai";
+}
+
+function buildProviderAwareLbUsageStatusState(options) {
+  const providerId = String(options && options.providerId || "").trim().toLowerCase();
+  if (providerId === "openai") {
+    return {
+      text: "openai",
+      tooltip: "Current provider: openai",
+      colorTheme: null,
+      backgroundTheme: null,
+      accessibilityLabel: "Current provider openai",
+      command: "codexProviderStatusbar.selectCodexLbRoute"
+    };
+  }
+
+  const hasPayload = Boolean(options && options.hasPayload);
+  const error = String(options && options.error || "").trim();
+  if (!hasPayload) {
+    return {
+      text: error ? "$(warning) LB usage" : "$(pulse) LB --%",
+      tooltip: error
+        ? `Codex LB usage tokens unavailable: ${error}`
+        : "Codex LB usage tokens: loading live quota",
+      colorTheme: error ? "statusBarItem.warningForeground" : null,
+      backgroundTheme: error ? "statusBarItem.warningBackground" : null,
+      accessibilityLabel: null,
+      command: "codexProviderStatusbar.showCodexLbUsage"
+    };
+  }
+
+  const remaining = toFiniteNumber(options && options.remainingPercent, 0);
+  const icon = remaining <= 10 ? "$(error)" : remaining <= 25 ? "$(warning)" : "$(circle-filled)";
+  const lbLabel = String(options && options.lbLabel || "LB").trim() || "LB";
+  return {
+    text: `${icon} ${lbLabel} ${formatPercent(remaining)}`,
+    tooltip: options && options.tooltip ? options.tooltip : "",
+    colorTheme: remaining <= 10
+      ? "statusBarItem.errorForeground"
+      : remaining <= 25
+        ? "statusBarItem.warningForeground"
+        : null,
+    backgroundTheme: remaining <= 10
+      ? "statusBarItem.errorBackground"
+      : remaining <= 25
+        ? "statusBarItem.warningBackground"
+        : null,
+    accessibilityLabel: `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} remaining`,
+    command: "codexProviderStatusbar.showCodexLbUsage"
+  };
+}
+
 function updateCodexLbUsageStatusItem() {
   if (!lbUsageStatusBarItem) {
     return;
@@ -1415,38 +1481,29 @@ function updateCodexLbUsageStatusItem() {
     return;
   }
 
-  if (!lbUsageLastPayload) {
-    lbUsageStatusBarItem.text = lbUsageLastError ? "$(warning) LB usage" : "$(pulse) LB --%";
-    lbUsageStatusBarItem.tooltip = lbUsageLastError
-      ? `Codex LB usage tokens unavailable: ${lbUsageLastError}`
-      : "Codex LB usage tokens: loading live quota";
-    lbUsageStatusBarItem.color = lbUsageLastError ? new vscode.ThemeColor("statusBarItem.warningForeground") : undefined;
-    lbUsageStatusBarItem.backgroundColor = lbUsageLastError
-      ? new vscode.ThemeColor("statusBarItem.warningBackground")
-      : undefined;
-    lbUsageStatusBarItem.show();
-    return;
-  }
+  const hasPayload = Boolean(lbUsageLastPayload);
+  const nextState = buildProviderAwareLbUsageStatusState({
+    providerId: readCurrentProviderIdForStatusItems(),
+    hasPayload,
+    error: lbUsageLastError,
+    remainingPercent: hasPayload ? lbUsageLastPayload.remaining_percent : null,
+    lbLabel: hasPayload ? formatActiveCodexLbShortLabel(settings) : "",
+    tooltip: hasPayload ? buildCodexLbUsageTooltip(settings) : null
+  });
 
-  const remaining = toFiniteNumber(lbUsageLastPayload.remaining_percent, 0);
-  const icon = remaining <= 10 ? "$(error)" : remaining <= 25 ? "$(warning)" : "$(circle-filled)";
-  const lbLabel = formatActiveCodexLbShortLabel(settings);
-  lbUsageStatusBarItem.text = `${icon} ${lbLabel} ${formatPercent(remaining)}`;
-  lbUsageStatusBarItem.tooltip = buildCodexLbUsageTooltip(settings);
-  lbUsageStatusBarItem.color = remaining <= 10
-    ? new vscode.ThemeColor("statusBarItem.errorForeground")
-    : remaining <= 25
-      ? new vscode.ThemeColor("statusBarItem.warningForeground")
-      : undefined;
-  lbUsageStatusBarItem.backgroundColor = remaining <= 10
-    ? new vscode.ThemeColor("statusBarItem.errorBackground")
-    : remaining <= 25
-      ? new vscode.ThemeColor("statusBarItem.warningBackground")
-      : undefined;
-  lbUsageStatusBarItem.accessibilityInformation = {
-    label: `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} remaining`,
-    role: "button"
-  };
+  lbUsageStatusBarItem.text = nextState.text;
+  lbUsageStatusBarItem.tooltip = nextState.tooltip;
+  lbUsageStatusBarItem.command = nextState.command;
+  lbUsageStatusBarItem.color = nextState.colorTheme ? new vscode.ThemeColor(nextState.colorTheme) : undefined;
+  lbUsageStatusBarItem.backgroundColor = nextState.backgroundTheme
+    ? new vscode.ThemeColor(nextState.backgroundTheme)
+    : undefined;
+  lbUsageStatusBarItem.accessibilityInformation = nextState.accessibilityLabel
+    ? {
+        label: nextState.accessibilityLabel,
+        role: "button"
+      }
+    : undefined;
   lbUsageStatusBarItem.show();
 }
 
@@ -1531,8 +1588,6 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
   });
 
   let providerChanged = false;
-  let activeProviderInfo = current;
-  let normalizationResult = null;
   if (current.providerId !== "openai" || current.providerId === "custom") {
     const nextText = buildUpdatedConfigText(configText, {
       providerId: "openai",
@@ -1540,7 +1595,6 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
     });
     await writeConfigText(DEFAULTS.configPath, nextText);
     providerChanged = nextText !== configText;
-    activeProviderInfo = detectProviderInfo(nextText);
     await appendDebugLog(context, outputChannel, "openai-direct-login-provider-written", {
       previousProviderId: current.providerId,
       previousProfile: current.profile,
@@ -1550,10 +1604,6 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
       await refreshStatusBar(context, outputChannel, statusBarItem);
     }
   }
-
-  normalizationResult = await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
-    currentProviderInfo: activeProviderInfo
-  });
 
   try {
     await executeCodexLogout(codexBinaryPath);
@@ -1573,13 +1623,11 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
   }
   pendingOpenAiDirectLogin = {
     authMtimeMs,
-    startedAt: Date.now(),
-    targetHistoryProviderId: "openai"
+    startedAt: Date.now()
   };
   await appendDebugLog(context, outputChannel, "openai-direct-login-armed", {
     providerChanged,
-    authMtimeMs,
-    normalizedHistoryRows: normalizationResult && normalizationResult.changed ? normalizationResult.changed : 0
+    authMtimeMs
   });
 
   terminal.show(true);
@@ -1590,7 +1638,7 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
   });
 
   void vscode.window.showInformationMessage(
-    "Started direct ChatGPT Plus/Pro sign-in in the terminal. The task history has been moved to the OpenAI view; after auth.json updates, the extension host will restart automatically."
+    "Started direct ChatGPT Plus/Pro sign-in in the terminal. After auth.json updates, the extension host will restart automatically."
   );
 }
 
@@ -1614,21 +1662,7 @@ async function maybeFinalizePendingOpenAiDirectLogin(context, outputChannel) {
     return;
   }
 
-  const finalizeState = pendingOpenAiDirectLogin;
   pendingOpenAiDirectLogin = null;
-  let normalizationResult = null;
-
-  try {
-    const { info } = await getCurrentProviderInfo();
-    normalizationResult = await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
-      currentProviderInfo: info,
-      toProviderId: finalizeState.targetHistoryProviderId || "openai"
-    });
-  } catch (error) {
-    await appendDebugLog(context, outputChannel, "openai-direct-login-history-normalize-failed", {
-      message: error instanceof Error ? error.message : String(error)
-    });
-  }
 
   const settings = getSettings();
   if (settings.autoOpenCodexSidebar) {
@@ -1636,11 +1670,10 @@ async function maybeFinalizePendingOpenAiDirectLogin(context, outputChannel) {
     await appendDebugLog(context, outputChannel, "openai-direct-login-post-auth-sidebar-armed");
   }
   await appendDebugLog(context, outputChannel, "openai-direct-login-auth-updated", {
-    authMtimeMs: nextMtimeMs,
-    normalizedHistoryRows: normalizationResult && normalizationResult.changed ? normalizationResult.changed : 0
+    authMtimeMs: nextMtimeMs
   });
   void vscode.window.showInformationMessage(
-    "Direct ChatGPT Plus/Pro login completed. Restarting the extension host to load the OpenAI provider with the same task history."
+    "Direct ChatGPT Plus/Pro login completed. Restarting the extension host to load the OpenAI provider."
   );
   await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "openai-direct-login-restart-after-auth");
   await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
@@ -1786,25 +1819,20 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   const settings = getSettings();
   const workspaceAlias = String(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_KEY, "") || "").trim();
   const workspaceProjectPath = getCurrentWorkspaceProjectPath();
-  const shouldOpenBlankRemoteWindow = !shouldOpen
+  const blankWindowFallbackEligible = !shouldOpen
     && settings.autoOpenCodexSidebar
     && looksLikeRemoteSessionAlias(workspaceAlias)
     && Boolean(workspaceProjectPath)
     && !vscode.window.activeTextEditor
     && vscode.window.visibleTextEditors.length === 0;
+  const shouldOpenSidebar = Boolean(shouldOpen) && settings.autoOpenCodexSidebar;
 
-  if (!shouldOpen && !shouldOpenBlankRemoteWindow) {
+  if (!shouldOpenSidebar) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip", {
       workspaceAlias: workspaceAlias || null,
-      blankWindowFallbackEligible: shouldOpenBlankRemoteWindow,
+      blankWindowFallbackEligible,
       workspaceProjectPath: workspaceProjectPath || null
     });
-    return;
-  }
-
-  if (!settings.autoOpenCodexSidebar) {
-    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
-    await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip-disabled");
     return;
   }
 
@@ -1814,7 +1842,7 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
     remoteName: String(vscode.env.remoteName || ""),
     workspaceAlias: workspaceAlias || null,
     workspaceProjectPath: workspaceProjectPath || null,
-    openedBecauseBlankWindow: shouldOpenBlankRemoteWindow,
+    openedBecauseBlankWindow: false,
     lastRotationTarget: context.globalState.get(ROTATION_LAST_TARGET_KEY, null),
     lastRotationCurrent: context.globalState.get(ROTATION_LAST_CURRENT_KEY, null),
     lastRotationLogoutAt: context.globalState.get(ROTATION_LAST_LOGOUT_AT_KEY, null)
@@ -4241,6 +4269,10 @@ async function openCodexLbDashboardCommand(context, outputChannel) {
 }
 
 async function refreshCodexLbUsageCommand(context, outputChannel, options = {}) {
+  if (shouldSkipCodexLbBackgroundRefresh(options)) {
+    return;
+  }
+
   if (lbUsageRefreshInFlight) {
     return;
   }
@@ -4305,6 +4337,10 @@ async function refreshCodexLbUsageCommand(context, outputChannel, options = {}) 
 }
 
 async function refreshCodexLbModelsCommand(context, outputChannel, options = {}) {
+  if (shouldSkipCodexLbBackgroundRefresh(options)) {
+    return;
+  }
+
   if (lbModelCacheRefreshInFlight) {
     return;
   }
@@ -4429,6 +4465,7 @@ async function showCodexLbStatusCommand(context, outputChannel) {
 
 async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem = null) {
   const settings = getSettings();
+  let currentProvider = null;
   let currentProviderId = "custom";
   try {
     const statusResponse = await fetchJsonResponse(getCodexLbStatusUrl(settings));
@@ -4439,8 +4476,10 @@ async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem =
   }
   try {
     const providerInfo = await getCurrentProviderInfo();
+    currentProvider = providerInfo && providerInfo.info ? providerInfo.info : null;
     currentProviderId = String(providerInfo && providerInfo.info && providerInfo.info.providerId || "custom").trim() || "custom";
   } catch {
+    currentProvider = null;
     currentProviderId = "custom";
   }
 
@@ -4472,12 +4511,42 @@ async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem =
     lbStatusLastError = "";
     lbUsageLastUpstream = "";
     updateCodexLbUsageStatusItem();
-    await refreshCodexLbModelsCommand(context, outputChannel, { silent: true });
-    await refreshCodexLbUsageCommand(context, outputChannel, { silent: true });
+    await refreshCodexLbModelsCommand(context, outputChannel, { silent: true, force: true });
+    await refreshCodexLbUsageCommand(context, outputChannel, { silent: true, force: true });
     await appendDebugLog(context, outputChannel, "codex-lb-route-selected", {
       mode: picked.mode,
       route: formatCodexLbRouteLine(settings)
     });
+
+    if (currentProviderId === "openai") {
+      const providerInfo = await getCurrentProviderInfo();
+      const nextText = buildUpdatedConfigText(providerInfo.configText, {
+        providerId: "codex-lb"
+      });
+      const nextInfo = detectProviderInfo(nextText);
+      if (nextText !== providerInfo.configText) {
+        await writeConfigText(DEFAULTS.configPath, nextText);
+      }
+      pendingOpenAiDirectLogin = null;
+      await appendDebugLog(context, outputChannel, "codex-lb-route-provider-restored", {
+        mode: picked.mode,
+        previousProviderId: currentProviderId,
+        previousProviderLabel: currentProvider && currentProvider.label ? currentProvider.label : null,
+        nextProviderId: nextInfo.providerId,
+        nextProviderLabel: nextInfo.label
+      });
+      if (statusBarItem) {
+        await refreshStatusBar(context, outputChannel, statusBarItem);
+      }
+      void vscode.window.showInformationMessage(
+        `Codex LB route selected: ${formatCodexLbRoutePickMessageLabel(picked)}. Returning provider to Codex LB without restarting the extension host, so active Codex tasks stay connected.`
+      );
+      await appendDebugLog(context, outputChannel, "codex-lb-route-provider-restored-no-restart", {
+        mode: picked.mode,
+        reason: "avoid-interrupting-active-codex-task"
+      });
+      return;
+    }
 
     const choice = await vscode.window.showInformationMessage(
       `Codex LB route selected: ${formatCodexLbRoutePickMessageLabel(picked)}. ${formatCodexLbRouteLine(settings)}`,
@@ -4603,7 +4672,7 @@ function resolveRemoteSessionOpenPath(inputPath) {
     return normalizeRemotePath(workspaceProjectPath);
   }
 
-  return normalizeRemotePath(os.homedir());
+  return normalizeRemotePath(DEFAULT_REMOTE_SESSION_PATH);
 }
 
 function detectCurrentSshAliasDetails() {
@@ -5586,9 +5655,6 @@ async function switchProvider(context, outputChannel, statusBarItem) {
     nextLabel: nextInfo.label
   });
   await refreshStatusBar(context, outputChannel, statusBarItem);
-  await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
-    currentProviderInfo: nextInfo
-  });
 
   if (settings.autoOpenCodexSidebar) {
     await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, true);
@@ -5773,18 +5839,6 @@ function activate(context) {
   void heartbeatRemoteSessionAlias(context, outputChannel, "activate");
   registerConfigWatchers(context, outputChannel, statusBarItem, metricsStatusBarItem);
   void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
-  void (async () => {
-    try {
-      const { info } = await getCurrentProviderInfo();
-      await normalizeVsCodeTaskHistoryProviderBuckets(context, outputChannel, {
-        currentProviderInfo: info
-      });
-    } catch (error) {
-      await appendDebugLog(context, outputChannel, "history-provider-normalize-activate-failed", {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  })();
   void refreshCodexLbUsageCommand(context, outputChannel, { silent: true });
   void refreshCodexLbModelsCommand(context, outputChannel, { silent: true });
   const refreshTimer = setInterval(() => {
@@ -5835,5 +5889,8 @@ function deactivate() {}
 
 module.exports = {
   activate,
-  deactivate
+  deactivate,
+  __test: {
+    buildProviderAwareLbUsageStatusState
+  }
 };

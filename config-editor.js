@@ -202,11 +202,17 @@ function replaceSection(lines, sectionName, sectionBodyLines) {
 }
 
 function buildUpdatedConfigText(existingText, options) {
-  const settings = { ...DEFAULTS, ...options };
+  const settings = { ...DEFAULTS, providerId: "openai", ...options };
   const lines = toLines(existingText);
   let nextLines = removeTopLevelString(lines, "profile");
-  nextLines = upsertTopLevelString(nextLines, "model_provider", "openai");
-  nextLines = upsertTopLevelString(nextLines, "model", settings.openaiModel);
+  const providerId = String(settings.providerId || "openai").trim() || "openai";
+  const currentModel = parseTopLevelString(nextLines, "model");
+  const nextModel = providerId === "openai"
+    ? settings.openaiModel
+    : String(settings.codexLbModel || currentModel || settings.openaiModel).trim();
+
+  nextLines = upsertTopLevelString(nextLines, "model_provider", providerId);
+  nextLines = upsertTopLevelString(nextLines, "model", nextModel);
 
   return nextLines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }

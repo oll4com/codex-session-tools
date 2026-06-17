@@ -25,5 +25,11 @@ jobs:
       - name: Validate extension syntax
         run: node --check extension.js
 
+      - name: Run regression tests
+        run: node --test tests/*.test.js
+
+      - name: Validate helper syntax
+        run: bash -n scripts/codex-lb-vscode-select
+
       - name: Verify pack contents
         run: npm pack --dry-run

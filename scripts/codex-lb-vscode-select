@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOME_DIR="${HOME:-/home/proxmoxusr}"
+ROUTE_FILE="${CODEX_LB_VSCODE_ROUTE_FILE:-$HOME_DIR/.config/codex-lb-vscode-route.json}"
+STATUS_URL="${CODEX_LB_VSCODE_STATUS_URL:-http://127.0.0.1:2458/__lb/status}"
+
+DEFAULT_PRIMARY_BASE_URL="${CODEX_LB_PRIMARY_BASE_URL:-http://127.0.0.1:2455}"
+DEFAULT_FALLBACK_BASE_URL="${CODEX_LB_FALLBACK_BASE_URL:-http://127.0.0.1:2456}"
+DEFAULT_HEADROOM_BASE_URL="${CODEX_LB_HEADROOM_BASE_URL:-http://127.0.0.1:8787}"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: codex-lb-vscode-select MODE
+
+Modes:
+  headroom            route /v1 traffic through the Headroom gateway, fail open to direct auto
+  direct, auto        direct Codex-LB with primary then fallback
+  primary             direct Codex-LB primary only
+  fallback            direct Codex-LB fallback only
+  primary-direct      alias used by Codex Session Tools
+  auto-direct         alias used by Codex Session Tools
+  fallback-direct     alias used by Codex Session Tools
+  status              print local proxy status, or the route JSON if the proxy is unavailable
+EOF
+}
+
+mode_arg="$(printf '%s' "${1:-status}" | tr '[:upper:]' '[:lower:]')"
+route_mode=""
+upstream_mode=""
+
+case "$mode_arg" in
+  status)
+    if command -v curl >/dev/null 2>&1 && curl -fsS "$STATUS_URL"; then
+      printf '\n'
+      exit 0
+    fi
+    if [[ -r "$ROUTE_FILE" ]]; then
+      cat "$ROUTE_FILE"
+      printf '\n'
+      exit 0
+    fi
+    echo "Codex-LB route state is missing: $ROUTE_FILE" >&2
+    exit 1
+    ;;
+  headroom)
+    route_mode="headroom"
+    upstream_mode="auto"
+    ;;
+  direct|auto|auto-direct)
+    route_mode="direct"
+    upstream_mode="auto"
+    ;;
+  primary|primary-direct)
+    route_mode="direct"
+    upstream_mode="primary"
+    ;;
+  fallback|fallback-direct)
+    route_mode="direct"
+    upstream_mode="fallback"
+    ;;
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown Codex-LB route mode: $mode_arg" >&2
+    usage
+    exit 2
+    ;;
+esac
+
+selected_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+selected_by="$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")"
+mkdir -p "$(dirname "$ROUTE_FILE")"
+
+python3 - "$ROUTE_FILE" "$route_mode" "$upstream_mode" "$selected_at" "$selected_by" \
+  "$DEFAULT_PRIMARY_BASE_URL" "$DEFAULT_FALLBACK_BASE_URL" "$DEFAULT_HEADROOM_BASE_URL" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+route_file = Path(sys.argv[1]).expanduser()
+route_mode = sys.argv[2]
+upstream_mode = sys.argv[3]
+selected_at = sys.argv[4]
+selected_by = sys.argv[5]
+default_primary = sys.argv[6].rstrip("/")
+default_fallback = sys.argv[7].rstrip("/")
+default_headroom = sys.argv[8].rstrip("/")
+
+try:
+    current = json.loads(route_file.read_text(encoding="utf-8"))
+    if not isinstance(current, dict):
+        current = {}
+except Exception:
+    current = {}
+
+def base_url(name: str, fallback: str) -> str:
+    value = str(current.get(name) or "").strip().rstrip("/")
+    return value or fallback
+
+payload = {
+    "route_mode": route_mode,
+    "mode": upstream_mode,
+    "selected_at": selected_at,
+    "selected_by": selected_by,
+    "primary_base_url": base_url("primary_base_url", default_primary),
+    "fallback_base_url": base_url("fallback_base_url", default_fallback),
+    "headroom_base_url": base_url("headroom_base_url", default_headroom),
+    "headroom_failover_to_direct": current.get("headroom_failover_to_direct", True) is not False,
+}
+
+route_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+
+echo "Codex-LB VS Code route selected: ${route_mode}/${upstream_mode}"

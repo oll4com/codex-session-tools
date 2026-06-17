@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3 - 2026-06-17
+
+- Added the Codex-LB VS Code route selector helper script to source control and packaged files.
+- Fixed Codex-LB route restore from direct OpenAI mode so it returns to Codex-LB without restarting the extension host.
+- Made the Codex-LB usage badge provider-aware so direct OpenAI mode shows a plain `openai` state instead of stale LB quota data.
+- Changed new SSH remote-session windows to open `/etc` by default instead of the remote home directory.
+
 ## 0.2.2 - 2026-06-17
 
 - Added a `Clear task history` action that removes local Codex task history data and reloads the window for a clean sidebar refresh.

@@ -59,7 +59,7 @@ The goal is to keep one maintained extension identity for:
 
 ## Release Status
 
-- Current public repo version: `0.2.0`
+- Current public repo version: `0.2.3`
 - License: MIT
 - Changelog: see [CHANGELOG.md](CHANGELOG.md)
 

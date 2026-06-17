@@ -2,7 +2,7 @@
   "name": "codex-session-tools",
   "displayName": "Codex Session Tools",
   "description": "VS Code extension for Codex and Kilo workflows, account rotation, and Codex LB routing helpers.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "oll4com",
   "license": "MIT",
   "repository": {
@@ -20,7 +20,8 @@
     "PUBLISHING.md",
     "LICENSE.md",
     "CHANGELOG.md",
-    "media"
+    "media",
+    "scripts"
   ],
   "engines": {
     "vscode": "^1.96.2"
@@ -444,7 +445,7 @@
         },
         "codexProviderStatusbar.remoteSessionOpenPath": {
           "type": "string",
-          "default": "~",
+          "default": "/etc",
           "scope": "application",
           "description": "Remote path opened in the new SSH window for 'Open Next Remote Session'. Root-only values fall back to the current project path, otherwise the remote home directory."
         },
