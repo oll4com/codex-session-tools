@@ -29,6 +29,9 @@ const REMOTE_SESSION_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 const REMOTE_SESSION_LIVE_TIMEOUT_MS = 15 * 60 * 1000;
 const REMOTE_SESSION_PENDING_TIMEOUT_MS = 3 * 60 * 1000;
 const APP_SERVER_TERMINATION_TIMEOUT_MS = 5000;
+const STALE_CODEX_PROCESS_SCAN_TIMEOUT_MS = 8000;
+const STALE_CODEX_PROCESS_TERM_GRACE_MS = 900;
+const STALE_CODEX_PROCESS_KILL_GRACE_MS = 400;
 const ROTATION_LAST_TARGET_KEY = "rotationLastTargetAccount";
 const ROTATION_LAST_CURRENT_KEY = "rotationLastCurrentAccount";
 const ROTATION_LAST_LOGOUT_AT_KEY = "rotationLastLogoutAt";
@@ -56,6 +59,16 @@ const CODEX_SESSION_INDEX_PATH = path.join(os.homedir(), ".codex", "session_inde
 const CODEX_SESSIONS_ROOT_DIR = path.join(CODEX_STATE_ROOT_DIR, "sessions");
 const CODEX_SHELL_SNAPSHOTS_DIR = path.join(CODEX_STATE_ROOT_DIR, "shell_snapshots");
 const DEFAULT_SQLITE_TIMEOUT_MS = 8000;
+const CODEX_SQLITE_REPAIR_DB_NAMES = [
+  "state_5.sqlite",
+  "logs_2.sqlite",
+  "goals_1.sqlite",
+  "memories_1.sqlite"
+];
+const CODEX_SQLITE_REPAIR_SIDECAR_SUFFIXES = [".sqlite-wal", ".sqlite-shm"];
+const CODEX_SQLITE_REPAIR_DOCTOR_TIMEOUT_MS = 45000;
+const CODEX_THREAD_RECORDER_REPAIR_TIMEOUT_MS = 8000;
+const CODEX_THREAD_RECORDER_REPAIR_FILE_PATTERN = /^rollout-.*\.jsonl$/;
 const REMOTE_SESSION_KNOWN_ALIASES_KEY = "remoteSessionKnownAliases";
 const REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY = "remoteSessionFallbackLastTarget";
 const REMOTE_SESSION_ALIAS_ORDER_VERSION_KEY = "remoteSessionAliasOrderVersion";
@@ -63,6 +76,13 @@ const REMOTE_SESSION_ALIAS_ORDER_RESET_AT_KEY = "remoteSessionAliasOrderResetAt"
 const REMOTE_SESSION_LIVE_ALIASES_KEY = "remoteSessionLiveAliases";
 const REMOTE_SESSION_WORKSPACE_ALIAS_KEY = "remoteSessionWorkspaceAlias";
 const REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY = "remoteSessionWorkspaceAliasSource";
+const REMOTE_SESSION_WORKSPACE_ALIAS_STRONG_KEY = "remoteSessionWorkspaceAliasStrong";
+const REMOTE_SESSION_LANE_ID_KEY = "remoteSessionLaneId";
+const REMOTE_SESSION_LANE_REMOTE_ALIAS_KEY = "remoteSessionLaneRemoteAlias";
+const REMOTE_SESSION_LANE_EXPECTED_PATH_KEY = "remoteSessionLaneExpectedPath";
+const REMOTE_SESSION_LANE_EXPECTED_BRANCH_KEY = "remoteSessionLaneExpectedBranch";
+const REMOTE_SESSION_LANE_ROLE_KEY = "remoteSessionLaneRole";
+const REMOTE_SESSION_LANE_MANIFEST_PATH_KEY = "remoteSessionLaneManifestPath";
 const REMOTE_SESSION_ALIAS_REGISTRY_DIR = "remote-session-aliases";
 const REMOTE_SESSION_ALIAS_ORDER_VERSION = "remote-alias-source-trust-20260424";
 const DEFAULT_REMOTE_SESSION_PRESENCE_ALIAS = "";
@@ -72,14 +92,21 @@ const REMOTE_SESSION_PRESENCE_SYNC_MIN_INTERVAL_MS = 20 * 1000;
 const STATUSBAR_LAST_ACCOUNT_ID_KEY = "statusBarLastAccountId";
 const DEFAULT_REMOTE_SESSION_ALIAS = "codex-dev";
 const DEFAULT_REMOTE_SESSION_PATH = "/etc";
-const DEFAULT_REMOTE_SESSION_MAX_INDEX = 5;
+const DEFAULT_REMOTE_SESSION_MAX_INDEX = 7;
+const DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH = path.join(
+  os.homedir(),
+  "agent-workspace",
+  "active",
+  "coder-rooms-lanes.json"
+);
 const COMMAND_CHAIN_STEP_DELAY_MS = 60;
+const CODEX_LAYOUT_SETTLE_DELAYS_MS = [250, 1600, 4500];
 const SCREEN_CAPTURE_DIR_NAME = "codex-screen-captures";
 const DEFAULT_CODEX_LB_PROXY_BASE_URL = "http://127.0.0.1:2458";
 const DEFAULT_CODEX_LB_DASHBOARD_URL = "http://127.0.0.1:2455/dashboard";
 const DEFAULT_CODEX_LB_PRIMARY_BASE_URL = "http://127.0.0.1:2455";
-const DEFAULT_CODEX_LB_FALLBACK_BASE_URL = "http://127.0.0.1:2456";
-const DEFAULT_CODEX_LB_HEADROOM_BASE_URL = "http://127.0.0.1:8787";
+const DEFAULT_CODEX_LB_FALLBACK_BASE_URL = "";
+const DEFAULT_CODEX_LB_HEADROOM_BASE_URL = "";
 const DEFAULT_CODEX_LB_ROUTE_STATE_PATH = path.join(os.homedir(), ".config", "codex-lb-vscode-route.json");
 const DEFAULT_CODEX_LB_PROVIDER_ENV_PATH = path.join(os.homedir(), ".config", "codex-lb-provider.env");
 const DEFAULT_CODEX_LB_MODEL_CACHE_REFRESHER_PATH = path.join(os.homedir(), "scripts", "codex_lb_refresh_model_cache.js");
@@ -99,6 +126,36 @@ const CODEX_LB_LAST_MODEL_STATE_PATH = path.join(
 const CODEX_LB_USAGE_REFRESH_INTERVAL_MS = 30 * 1000;
 const CODEX_LB_FETCH_TIMEOUT_MS = 8 * 1000;
 const FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS = true;
+const CLEAN_STABLE_OPENAI_EXTENSION_REL = "openai.chatgpt-26.623.42026-linux-x64";
+const CLEAN_STABLE_CUSTOM_EXTENSION_REL = "oll4com.codex-session-tools-0.2.8";
+const CLEAN_STABLE_OPENAI_VERSION = "26.623.42026";
+const CLEAN_STABLE_CUSTOM_VERSION = "0.2.8";
+const CLEAN_OPENAI_CODEX_CHAT_SESSIONS = [
+  {
+    type: "openai-codex",
+    name: "Codex",
+    displayName: "OpenAI Codex",
+    description: "OpenAI Codex integration for VS Code"
+  }
+];
+const RESTORE_SENSITIVE_SETTING_KEYS = new Set(["chatgpt.openOnStartup"]);
+const RESTORE_SENSITIVE_SETTING_PREFIXES = ["codexProviderStatusbar."];
+const CLEAN_RESTORE_STALE_EXTENSION_PATTERNS = [
+  /^openai\.chatgpt-(?!26\.623\.42026-linux-x64$).+/i,
+  /^oll4com\.codex-session-tools-(?!0\.2\.8$).+/i,
+  /^sst-dev\.opencode-.+/i,
+  /^codium\.codium-.+/i,
+  /^anthropic\.claude-code-.+/i,
+  /^kilocode\.kilo-code-.+/i
+];
+const CLEAN_RESTORE_STALE_CACHE_RELATIVE_PATHS = [
+  path.join("data", "CachedExtensionVSIXs", "sst-dev.opencode-0.0.13"),
+  path.join("data", "CachedExtensionVSIXs", "openai.chatgpt-26.5623.42026-linux-x64"),
+  path.join("data", "CachedExtensionVSIXs", "codium.codium-2.2.4"),
+  path.join("data", "CachedExtensionVSIXs", ".trash", "codium.codium-2.2.4.sigzip"),
+  path.join("data", "CachedExtensionVSIXs", ".trash", "openai.chatgpt-26.5623.42026-linux-x64.sigzip")
+];
+const VSCODE_SERVER_LOGS_RELATIVE_PATH = path.join("data", "logs");
 
 let currentRemoteSessionAlias = "";
 let currentRemoteSessionAliasSource = "";
@@ -120,6 +177,7 @@ let lbStatusLastError = "";
 let lbModelCacheRefreshInFlight = false;
 let lbModelCacheLastError = "";
 let pendingOpenAiDirectLogin = null;
+let openAiDirectLoginAllowedUntilMs = 0;
 
 function execFileJsonSafe(command, args, timeoutMs = DEFAULT_SSH_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
@@ -205,6 +263,157 @@ function getCurrentWorkspaceProjectPath() {
   return isUsableCodexProjectPath(activeDirectory) ? activeDirectory : "";
 }
 
+function normalizeComparableFsPath(candidatePath) {
+  const normalizedPath = String(candidatePath || "").trim();
+  if (!normalizedPath) {
+    return "";
+  }
+
+  const resolvedPath = path.resolve(normalizedPath);
+  if (resolvedPath === path.sep) {
+    return resolvedPath;
+  }
+
+  return resolvedPath.replace(/[\\/]+$/, "");
+}
+
+function normalizeCoderRoomsLaneEntry(entry, manifestPath) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return null;
+  }
+
+  const laneId = String(entry.lane_id || entry.laneId || "").trim();
+  const remoteAlias = String(entry.remote_alias || entry.remoteAlias || "").trim();
+  const lanePath = normalizeComparableFsPath(entry.path);
+  const expectedBranch = String(entry.expected_branch || entry.expectedBranch || entry.branch || "").trim();
+  if (!laneId || !remoteAlias || !lanePath) {
+    return null;
+  }
+
+  return {
+    laneId,
+    remoteAlias,
+    path: lanePath,
+    expectedPath: lanePath,
+    branch: String(entry.branch || "").trim() || expectedBranch,
+    expectedBranch,
+    role: String(entry.role || "").trim(),
+    roomId: String(entry.room_id || entry.roomId || "").trim(),
+    parityStatus: String(entry.parity_status || entry.parityStatus || "").trim(),
+    launchBlocked: Boolean(entry.launch_blocked || entry.launchBlocked),
+    manifestPath: String(manifestPath || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH).trim()
+      || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH
+  };
+}
+
+async function readCoderRoomsLaneManifest() {
+  const manifestPath = DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH;
+  const manifest = await readJsonIfExists(manifestPath);
+  const lanes = manifest && typeof manifest === "object" && Array.isArray(manifest.lanes)
+    ? manifest.lanes
+      .map((entry) => normalizeCoderRoomsLaneEntry(entry, manifestPath))
+      .filter(Boolean)
+    : [];
+
+  return {
+    manifestPath,
+    lanes
+  };
+}
+
+async function findCoderRoomLaneForCurrentWorkspace() {
+  const workspaceProjectPath = normalizeComparableFsPath(getCurrentWorkspaceProjectPath());
+  if (!workspaceProjectPath) {
+    return null;
+  }
+
+  const manifest = await readCoderRoomsLaneManifest();
+  return manifest.lanes.find((entry) => entry.path === workspaceProjectPath) || null;
+}
+
+function buildRemoteSessionLaneStateFromBootstrapTrace(trace) {
+  if (!trace || typeof trace !== "object" || Array.isArray(trace)) {
+    return null;
+  }
+
+  const laneId = String(trace.laneId || "").trim();
+  const remoteAlias = String(trace.remoteAlias || trace.targetAlias || "").trim();
+  const expectedPath = normalizeComparableFsPath(trace.expectedPath || trace.remotePath || "");
+  if (!laneId || !remoteAlias || !expectedPath) {
+    return null;
+  }
+
+  return {
+    laneId,
+    remoteAlias,
+    expectedPath,
+    expectedBranch: String(trace.expectedBranch || "").trim(),
+    role: String(trace.role || "").trim(),
+    manifestPath: String(trace.manifestPath || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH).trim()
+      || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH
+  };
+}
+
+async function persistRemoteSessionLaneState(context, outputChannel, laneState, source = "unknown") {
+  if (!laneState || typeof laneState !== "object") {
+    return null;
+  }
+
+  const nextState = {
+    laneId: String(laneState.laneId || "").trim(),
+    remoteAlias: String(laneState.remoteAlias || "").trim(),
+    expectedPath: normalizeComparableFsPath(laneState.expectedPath || laneState.path || ""),
+    expectedBranch: String(laneState.expectedBranch || laneState.branch || "").trim(),
+    role: String(laneState.role || "").trim(),
+    manifestPath: String(laneState.manifestPath || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH).trim()
+      || DEFAULT_CODER_ROOMS_LANE_MANIFEST_PATH
+  };
+
+  if (!nextState.laneId || !nextState.remoteAlias || !nextState.expectedPath) {
+    return null;
+  }
+
+  const previousState = {
+    laneId: String(context.workspaceState.get(REMOTE_SESSION_LANE_ID_KEY, "") || "").trim(),
+    remoteAlias: String(context.workspaceState.get(REMOTE_SESSION_LANE_REMOTE_ALIAS_KEY, "") || "").trim(),
+    expectedPath: normalizeComparableFsPath(context.workspaceState.get(REMOTE_SESSION_LANE_EXPECTED_PATH_KEY, "") || ""),
+    expectedBranch: String(context.workspaceState.get(REMOTE_SESSION_LANE_EXPECTED_BRANCH_KEY, "") || "").trim(),
+    role: String(context.workspaceState.get(REMOTE_SESSION_LANE_ROLE_KEY, "") || "").trim(),
+    manifestPath: String(context.workspaceState.get(REMOTE_SESSION_LANE_MANIFEST_PATH_KEY, "") || "").trim()
+  };
+
+  const changed = previousState.laneId !== nextState.laneId
+    || previousState.remoteAlias !== nextState.remoteAlias
+    || previousState.expectedPath !== nextState.expectedPath
+    || previousState.expectedBranch !== nextState.expectedBranch
+    || previousState.role !== nextState.role
+    || previousState.manifestPath !== nextState.manifestPath;
+  if (!changed) {
+    return nextState;
+  }
+
+  await context.workspaceState.update(REMOTE_SESSION_LANE_ID_KEY, nextState.laneId);
+  await context.workspaceState.update(REMOTE_SESSION_LANE_REMOTE_ALIAS_KEY, nextState.remoteAlias);
+  await context.workspaceState.update(REMOTE_SESSION_LANE_EXPECTED_PATH_KEY, nextState.expectedPath);
+  await context.workspaceState.update(REMOTE_SESSION_LANE_EXPECTED_BRANCH_KEY, nextState.expectedBranch);
+  await context.workspaceState.update(REMOTE_SESSION_LANE_ROLE_KEY, nextState.role);
+  await context.workspaceState.update(REMOTE_SESSION_LANE_MANIFEST_PATH_KEY, nextState.manifestPath);
+  await appendDebugLog(context, outputChannel, "remote-session-lane-state-updated", {
+    source: String(source || "").trim() || "unknown",
+    laneId: nextState.laneId,
+    remoteAlias: nextState.remoteAlias,
+    expectedPath: nextState.expectedPath,
+    expectedBranch: nextState.expectedBranch || null,
+    role: nextState.role || null,
+    manifestPath: nextState.manifestPath,
+    previousLaneId: previousState.laneId || null,
+    previousRemoteAlias: previousState.remoteAlias || null,
+    previousExpectedPath: previousState.expectedPath || null,
+    previousExpectedBranch: previousState.expectedBranch || null
+  });
+  return nextState;
+}
+
 function isWorkspaceBackedRemoteSessionAliasSource(source) {
   const normalizedSource = normalizeRemoteSessionAliasSource(source);
   return normalizedSource === "workspace-state" || normalizedSource.startsWith("workspace-state:");
@@ -247,6 +456,14 @@ function getRemoteSessionInstanceId(context) {
   return remoteSessionInstanceId;
 }
 
+function appendOutputChannelLine(outputChannel, line) {
+  try {
+    outputChannel.appendLine(line);
+  } catch {
+    // The extension host can close the channel while a window reload is already in flight.
+  }
+}
+
 async function appendDebugLog(context, outputChannel, event, payload = {}) {
   const line = JSON.stringify({
     ts: new Date().toISOString(),
@@ -254,13 +471,14 @@ async function appendDebugLog(context, outputChannel, event, payload = {}) {
     payload
   });
 
-  outputChannel.appendLine(line);
+  appendOutputChannelLine(outputChannel, line);
 
   try {
     await fs.mkdir(context.globalStorageUri.fsPath, { recursive: true });
     await fs.appendFile(getLogPath(context), line + "\n", "utf8");
   } catch (error) {
-    outputChannel.appendLine(
+    appendOutputChannelLine(
+      outputChannel,
       JSON.stringify({
         ts: new Date().toISOString(),
         event: "debug-log-write-failed",
@@ -287,6 +505,156 @@ async function readJsonIfExists(filePath) {
   } catch {
     return null;
   }
+}
+
+function buildCleanStableExtensionProfileEntries(homeDir = os.homedir(), installedTimestamp = Date.now()) {
+  const extensionsDir = path.join(homeDir, ".vscode-server", "extensions");
+  const openAiPath = path.join(extensionsDir, CLEAN_STABLE_OPENAI_EXTENSION_REL);
+  const customPath = path.join(extensionsDir, CLEAN_STABLE_CUSTOM_EXTENSION_REL);
+  return [
+    {
+      identifier: {
+        id: "openai.chatgpt"
+      },
+      version: CLEAN_STABLE_OPENAI_VERSION,
+      location: {
+        $mid: 1,
+        fsPath: openAiPath,
+        path: openAiPath,
+        scheme: "file"
+      },
+      relativeLocation: CLEAN_STABLE_OPENAI_EXTENSION_REL,
+      metadata: {
+        isApplicationScoped: false,
+        isMachineScoped: false,
+        isBuiltin: false,
+        installedTimestamp,
+        pinned: false,
+        source: "gallery",
+        id: "90b52117-6fd1-4f1c-9e14-256bd6e21d79",
+        publisherId: "c0a8460b-1d33-4e44-9cf5-9874a65dd334",
+        publisherDisplayName: "OpenAI",
+        targetPlatform: "linux-x64",
+        updated: true,
+        private: false,
+        isPreReleaseVersion: false,
+        hasPreReleaseVersion: true,
+        preRelease: false
+      }
+    },
+    {
+      identifier: {
+        id: "oll4com.codex-session-tools"
+      },
+      version: CLEAN_STABLE_CUSTOM_VERSION,
+      location: {
+        $mid: 1,
+        fsPath: customPath,
+        external: `file://${customPath}`,
+        path: customPath,
+        scheme: "file"
+      },
+      relativeLocation: CLEAN_STABLE_CUSTOM_EXTENSION_REL,
+      metadata: {
+        isMachineScoped: true,
+        installedTimestamp,
+        pinned: true,
+        source: "vsix"
+      }
+    }
+  ];
+}
+
+function cleanRestoreSensitiveSettings(settings) {
+  const cleaned = {};
+  for (const [key, value] of Object.entries(settings || {})) {
+    if (RESTORE_SENSITIVE_SETTING_KEYS.has(key)) {
+      continue;
+    }
+    if (RESTORE_SENSITIVE_SETTING_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
+function normalizeOpenAiCodexManifest(manifest) {
+  const normalized = JSON.parse(JSON.stringify(manifest || {}));
+  normalized.activationEvents = ["onStartupFinished", "onUri"];
+  normalized.contributes = normalized.contributes && typeof normalized.contributes === "object"
+    ? normalized.contributes
+    : {};
+  normalized.contributes.views = normalized.contributes.views && typeof normalized.contributes.views === "object"
+    ? normalized.contributes.views
+    : {};
+  normalized.contributes.views.codexViewContainer = Array.isArray(normalized.contributes.views.codexViewContainer)
+    ? normalized.contributes.views.codexViewContainer
+    : [];
+  normalized.contributes.views.codexSecondaryViewContainer = Array.isArray(normalized.contributes.views.codexSecondaryViewContainer)
+    ? normalized.contributes.views.codexSecondaryViewContainer
+    : [];
+
+  if (!normalized.contributes.views.codexViewContainer[0]) {
+    normalized.contributes.views.codexViewContainer[0] = {
+      id: "chatgpt.sidebarView",
+      type: "webview",
+      name: "Codex"
+    };
+  }
+  normalized.contributes.views.codexViewContainer[0].when = "chatgpt.doesNotSupportSecondarySidebar";
+
+  if (!normalized.contributes.views.codexSecondaryViewContainer[0]) {
+    normalized.contributes.views.codexSecondaryViewContainer[0] = {
+      id: "chatgpt.sidebarSecondaryView",
+      type: "webview",
+      name: "Codex"
+    };
+  }
+  normalized.contributes.views.codexSecondaryViewContainer[0].when = "!chatgpt.doesNotSupportSecondarySidebar";
+  normalized.contributes.chatSessions = CLEAN_OPENAI_CODEX_CHAT_SESSIONS.map((entry) => ({ ...entry }));
+  return normalized;
+}
+
+function createRestoreStamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+function backupMirrorPath(backupRoot, sourcePath) {
+  return path.join(backupRoot, "removed", path.resolve(sourcePath).replace(/^\/+/, ""));
+}
+
+async function copyPathToBackup(sourcePath, backupRoot) {
+  const stat = await statIfExists(sourcePath);
+  if (!stat) {
+    return null;
+  }
+  let targetPath = backupMirrorPath(backupRoot, sourcePath);
+  if (await statIfExists(targetPath)) {
+    targetPath = `${targetPath}.${Date.now()}`;
+  }
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.cp(sourcePath, targetPath, { recursive: true, force: true });
+  return targetPath;
+}
+
+async function movePathToBackup(sourcePath, backupRoot) {
+  const stat = await statIfExists(sourcePath);
+  if (!stat) {
+    return null;
+  }
+  let targetPath = backupMirrorPath(backupRoot, sourcePath);
+  if (await statIfExists(targetPath)) {
+    targetPath = `${targetPath}.${Date.now()}`;
+  }
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.rename(sourcePath, targetPath);
+  return targetPath;
+}
+
+async function writeJsonFile(filePath, payload) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 async function writeRemoteSessionBootstrapTrace(context, payload) {
@@ -549,11 +917,20 @@ function normalizeRemoteSessionAliasSource(source) {
   return String(source || "").trim();
 }
 
-function isStrongRemoteSessionAliasSource(source) {
+function unwrapRemoteSessionAliasSource(source) {
   const normalizedSource = normalizeRemoteSessionAliasSource(source);
+  if (normalizedSource.startsWith("workspace-state:")) {
+    return normalizedSource.slice("workspace-state:".length);
+  }
+  return normalizedSource;
+}
+
+function isStrongRemoteSessionAliasSource(source) {
+  const normalizedSource = unwrapRemoteSessionAliasSource(source);
   return (
     normalizedSource === "detectCurrentSshAlias" ||
-    normalizedSource === "bootstrap-trace"
+    normalizedSource === "bootstrap-trace" ||
+    normalizedSource === "lane-manifest"
   );
 }
 
@@ -562,7 +939,8 @@ async function readFreshRemoteSessionBootstrapAlias(context) {
   if (!trace || typeof trace !== "object") {
     return {
       alias: "",
-      ageMs: null
+      ageMs: null,
+      trace: null
     };
   }
 
@@ -578,17 +956,53 @@ async function readFreshRemoteSessionBootstrapAlias(context) {
   ) {
     return {
       alias: "",
-      ageMs
+      ageMs,
+      trace: null
     };
   }
 
   return {
     alias: targetAlias,
-    ageMs
+    ageMs,
+    trace
   };
 }
 
 async function resolveCurrentRemoteSessionAlias(context, outputChannel) {
+  const bootstrapResolution = await readFreshRemoteSessionBootstrapAlias(context);
+  if (bootstrapResolution.alias) {
+    await persistRemoteSessionWorkspaceAlias(context, outputChannel, bootstrapResolution.alias, "bootstrap-trace");
+    const bootstrapLaneState = buildRemoteSessionLaneStateFromBootstrapTrace(bootstrapResolution.trace);
+    if (bootstrapLaneState) {
+      await persistRemoteSessionLaneState(context, outputChannel, bootstrapLaneState, "bootstrap-trace");
+    }
+    await appendDebugLog(context, outputChannel, "remote-session-alias-resolved-from-bootstrap", {
+      alias: bootstrapResolution.alias,
+      ageMs: bootstrapResolution.ageMs
+    });
+    return {
+      alias: bootstrapResolution.alias,
+      source: "bootstrap-trace"
+    };
+  }
+
+  const workspaceLane = await findCoderRoomLaneForCurrentWorkspace();
+  if (workspaceLane && workspaceLane.remoteAlias) {
+    await persistRemoteSessionWorkspaceAlias(context, outputChannel, workspaceLane.remoteAlias, "lane-manifest");
+    await persistRemoteSessionLaneState(context, outputChannel, workspaceLane, "lane-manifest");
+    await appendDebugLog(context, outputChannel, "remote-session-lane-manifest-match", {
+      laneId: workspaceLane.laneId,
+      remoteAlias: workspaceLane.remoteAlias,
+      expectedPath: workspaceLane.expectedPath,
+      expectedBranch: workspaceLane.expectedBranch || null,
+      manifestPath: workspaceLane.manifestPath
+    });
+    return {
+      alias: workspaceLane.remoteAlias,
+      source: "lane-manifest"
+    };
+  }
+
   const detectedAliasResolution = detectCurrentSshAliasDetails();
   const detectedAlias = String(detectedAliasResolution.alias || "").trim();
   const detectedAliasSource = String(detectedAliasResolution.source || "").trim();
@@ -597,19 +1011,6 @@ async function resolveCurrentRemoteSessionAlias(context, outputChannel) {
     return {
       alias: detectedAlias,
       source: "detectCurrentSshAlias"
-    };
-  }
-
-  const bootstrapResolution = await readFreshRemoteSessionBootstrapAlias(context);
-  if (bootstrapResolution.alias) {
-    await persistRemoteSessionWorkspaceAlias(context, outputChannel, bootstrapResolution.alias, "bootstrap-trace");
-    await appendDebugLog(context, outputChannel, "remote-session-alias-resolved-from-bootstrap", {
-      alias: bootstrapResolution.alias,
-      ageMs: bootstrapResolution.ageMs
-    });
-    return {
-      alias: bootstrapResolution.alias,
-      source: "bootstrap-trace"
     };
   }
 
@@ -651,6 +1052,7 @@ async function resolveCurrentRemoteSessionAlias(context, outputChannel) {
 async function persistRemoteSessionWorkspaceAlias(context, outputChannel, alias, source = "unknown") {
   const normalizedAlias = String(alias || "").trim();
   const normalizedSource = normalizeRemoteSessionAliasSource(source) || "unknown";
+  const normalizedStrong = isStrongRemoteSessionAliasSource(normalizedSource);
   if (!normalizedAlias) {
     return "";
   }
@@ -661,17 +1063,20 @@ async function persistRemoteSessionWorkspaceAlias(context, outputChannel, alias,
   const previousSource = normalizeRemoteSessionAliasSource(
     context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY, "")
   );
-  if (previousAlias === normalizedAlias && previousSource === normalizedSource) {
+  const previousStrong = Boolean(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_STRONG_KEY, false));
+  if (previousAlias === normalizedAlias && previousSource === normalizedSource && previousStrong === normalizedStrong) {
     return normalizedAlias;
   }
 
   await context.workspaceState.update(REMOTE_SESSION_WORKSPACE_ALIAS_KEY, normalizedAlias);
   await context.workspaceState.update(REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY, normalizedSource);
+  await context.workspaceState.update(REMOTE_SESSION_WORKSPACE_ALIAS_STRONG_KEY, normalizedStrong);
   await appendDebugLog(context, outputChannel, "remote-session-workspace-alias-updated", {
     alias: normalizedAlias,
     previousAlias: previousAlias || null,
     previousSource: previousSource || null,
-    source: normalizedSource
+    source: normalizedSource,
+    strong: normalizedStrong
   });
   return normalizedAlias;
 }
@@ -1065,11 +1470,21 @@ async function maybeRunRemoteSessionBootstrapDiagnostics(context, outputChannel)
   }, finalDelayMs);
 }
 
+async function primeRemoteSessionWorkspaceState(context, outputChannel) {
+  try {
+    await resolveCurrentRemoteSessionAlias(context, outputChannel);
+  } catch (error) {
+    await appendDebugLog(context, outputChannel, "remote-session-prime-failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 function getSettings() {
   const config = vscode.workspace.getConfiguration("codexProviderStatusbar");
   return {
     openaiModel: config.get("openaiModel", DEFAULTS.openaiModel),
-    autoOpenCodexSidebar: true,
+    autoOpenCodexSidebar: config.get("autoOpenCodexSidebar", true),
     showStatusBarItem: FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS ? false : config.get("showStatusBarItem", true),
     showCodexLbUsageStatusBarItem: config.get("showCodexLbUsageStatusBarItem", true),
     rotationEnabled: config.get("rotationEnabled", true),
@@ -1355,6 +1770,30 @@ function formatCodexLbResetAt(value) {
   return date.toLocaleString();
 }
 
+function getCodexLbAllAccountsRemainingPercent(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const explicit = Number(payload.all_accounts_remaining_percent);
+  if (Number.isFinite(explicit)) {
+    return explicit;
+  }
+  const legacy = Number(payload.remaining_percent);
+  return Number.isFinite(legacy) ? legacy : null;
+}
+
+function getCodexLbActiveAccountsRemainingPercent(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const explicit = Number(payload.active_accounts_remaining_percent);
+  if (Number.isFinite(explicit)) {
+    return explicit;
+  }
+  const legacy = Number(payload.active_remaining_percent);
+  return Number.isFinite(legacy) ? legacy : null;
+}
+
 function buildCodexLbUsageDetailsMessage(settings) {
   if (!lbUsageLastPayload) {
     return lbUsageLastError
@@ -1362,12 +1801,20 @@ function buildCodexLbUsageDetailsMessage(settings) {
       : "Codex LB usage tokens are loading from the live weekly endpoint.";
   }
 
+  const allRemaining = getCodexLbAllAccountsRemainingPercent(lbUsageLastPayload);
+  const activeRemaining = getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload);
+  const totalCount = formatCodexLbInteger(lbUsageLastPayload.all_accounts_count);
+  const activeCount = formatCodexLbInteger(lbUsageLastPayload.active_accounts_count);
   return [
-    `Codex LB usage tokens: ${formatPercent(lbUsageLastPayload.remaining_percent)} remaining`,
+    `Codex LB usage tokens: ${formatPercent(allRemaining)} all accounts remaining`,
+    activeRemaining === null
+      ? "Active accounts remaining: unavailable"
+      : `Active accounts remaining: ${formatPercent(activeRemaining)} (${activeCount} / ${totalCount} active)`,
     `Connected LB: ${describeActiveCodexLb(settings)}`,
     `LB route: ${formatCodexLbRouteLine(settings)}`,
-    `Used: ${formatPercent(lbUsageLastPayload.used_percent)}`,
-    `Credits: ${formatCodexLbInteger(lbUsageLastPayload.remaining_credits)} / ${formatCodexLbInteger(lbUsageLastPayload.capacity_credits)} remaining`,
+    `Pooled used: ${formatPercent(lbUsageLastPayload.used_percent)}`,
+    `Pooled credits: ${formatCodexLbInteger(lbUsageLastPayload.remaining_credits)} / ${formatCodexLbInteger(lbUsageLastPayload.capacity_credits)} remaining`,
+    `Active pooled credits: ${formatCodexLbInteger(lbUsageLastPayload.active_remaining_credits)} / ${formatCodexLbInteger(lbUsageLastPayload.active_capacity_credits)} remaining`,
     `Reset: ${formatCodexLbResetAt(lbUsageLastPayload.reset_at)}`,
     `Source: ${String(lbUsageLastPayload.source || "unknown")}`,
     `Endpoint: ${getCodexLbWeeklyRemainingUrl(settings)}`,
@@ -1380,20 +1827,29 @@ function formatCodexLbUsageSummaryLine() {
   if (!lbUsageLastPayload) {
     return lbUsageLastError ? `unavailable (${lbUsageLastError})` : "loading";
   }
-  return `${formatPercent(lbUsageLastPayload.remaining_percent)} remaining (${formatPercent(lbUsageLastPayload.used_percent)} used)`;
+  const allRemaining = getCodexLbAllAccountsRemainingPercent(lbUsageLastPayload);
+  const activeRemaining = getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload);
+  const activeText = activeRemaining === null ? "active unavailable" : `active ${formatPercent(activeRemaining)}`;
+  return `${formatPercent(allRemaining)} all accounts remaining; ${activeText}`;
 }
 
 function buildCodexLbUsageTooltip(settings) {
   const payload = lbUsageLastPayload || {};
+  const allRemaining = getCodexLbAllAccountsRemainingPercent(payload);
+  const activeRemaining = getCodexLbActiveAccountsRemainingPercent(payload);
+  const totalCount = formatCodexLbInteger(payload.all_accounts_count);
+  const activeCount = formatCodexLbInteger(payload.active_accounts_count);
   const tooltip = new vscode.MarkdownString(undefined, true);
   tooltip.supportHtml = false;
   tooltip.isTrusted = true;
   tooltip.appendMarkdown("**Codex LB usage tokens**\n\n");
   tooltip.appendMarkdown(`Connected LB: **${describeActiveCodexLb(settings)}**\n\n`);
   tooltip.appendMarkdown(`Route: **${formatCodexLbRouteLine(settings)}**\n\n`);
-  tooltip.appendMarkdown(`Remaining: **${formatPercent(payload.remaining_percent)}**\n\n`);
-  tooltip.appendMarkdown(`Used: ${formatPercent(payload.used_percent)}\n\n`);
-  tooltip.appendMarkdown(`Credits: ${formatCodexLbInteger(payload.remaining_credits)} / ${formatCodexLbInteger(payload.capacity_credits)} remaining\n\n`);
+  tooltip.appendMarkdown(`All accounts remaining: **${formatPercent(allRemaining)}**\n\n`);
+  tooltip.appendMarkdown(`Active accounts remaining: **${activeRemaining === null ? "unavailable" : formatPercent(activeRemaining)}** (${activeCount} / ${totalCount} active)\n\n`);
+  tooltip.appendMarkdown(`Pooled used: ${formatPercent(payload.used_percent)}\n\n`);
+  tooltip.appendMarkdown(`Pooled credits: ${formatCodexLbInteger(payload.remaining_credits)} / ${formatCodexLbInteger(payload.capacity_credits)} remaining\n\n`);
+  tooltip.appendMarkdown(`Active pooled credits: ${formatCodexLbInteger(payload.active_remaining_credits)} / ${formatCodexLbInteger(payload.active_capacity_credits)} remaining\n\n`);
   tooltip.appendMarkdown(`Reset: ${formatCodexLbResetAt(payload.reset_at)}\n\n`);
   tooltip.appendMarkdown(`Source: ${String(payload.source || "unknown")}\n\n`);
   tooltip.appendMarkdown(`Live models: ${formatCodexLbModelCacheSummaryLine()}\n\n`);
@@ -1445,28 +1901,34 @@ function buildProviderAwareLbUsageStatusState(options) {
       colorTheme: error ? "statusBarItem.warningForeground" : null,
       backgroundTheme: error ? "statusBarItem.warningBackground" : null,
       accessibilityLabel: null,
-      command: "codexProviderStatusbar.showCodexLbUsage"
+      command: "codexProviderStatusbar.selectCodexLbRoute"
     };
   }
 
   const remaining = toFiniteNumber(options && options.remainingPercent, 0);
-  const icon = remaining <= 10 ? "$(error)" : remaining <= 25 ? "$(warning)" : "$(circle-filled)";
+  const activeRemainingRaw = options && options.activeRemainingPercent;
+  const activeRemaining = Number.isFinite(Number(activeRemainingRaw)) ? Number(activeRemainingRaw) : null;
+  const alertRemaining = activeRemaining === null ? remaining : activeRemaining;
+  const icon = alertRemaining <= 10 ? "$(error)" : alertRemaining <= 25 ? "$(warning)" : "$(circle-filled)";
   const lbLabel = String(options && options.lbLabel || "LB").trim() || "LB";
+  const activeSuffix = activeRemaining === null ? "" : ` Act ${formatPercent(activeRemaining)}`;
   return {
-    text: `${icon} ${lbLabel} ${formatPercent(remaining)}`,
+    text: `${icon} ${lbLabel} ${formatPercent(remaining)}${activeSuffix}`,
     tooltip: options && options.tooltip ? options.tooltip : "",
-    colorTheme: remaining <= 10
+    colorTheme: alertRemaining <= 10
       ? "statusBarItem.errorForeground"
-      : remaining <= 25
+      : alertRemaining <= 25
         ? "statusBarItem.warningForeground"
         : null,
-    backgroundTheme: remaining <= 10
+    backgroundTheme: alertRemaining <= 10
       ? "statusBarItem.errorBackground"
-      : remaining <= 25
+      : alertRemaining <= 25
         ? "statusBarItem.warningBackground"
         : null,
-    accessibilityLabel: `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} remaining`,
-    command: "codexProviderStatusbar.showCodexLbUsage"
+    accessibilityLabel: activeRemaining === null
+      ? `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining`
+      : `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining, ${formatPercent(activeRemaining)} active accounts remaining`,
+    command: "codexProviderStatusbar.selectCodexLbRoute"
   };
 }
 
@@ -1486,7 +1948,8 @@ function updateCodexLbUsageStatusItem() {
     providerId: readCurrentProviderIdForStatusItems(),
     hasPayload,
     error: lbUsageLastError,
-    remainingPercent: hasPayload ? lbUsageLastPayload.remaining_percent : null,
+    remainingPercent: hasPayload ? getCodexLbAllAccountsRemainingPercent(lbUsageLastPayload) : null,
+    activeRemainingPercent: hasPayload ? getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload) : null,
     lbLabel: hasPayload ? formatActiveCodexLbShortLabel(settings) : "",
     tooltip: hasPayload ? buildCodexLbUsageTooltip(settings) : null
   });
@@ -1540,6 +2003,7 @@ function buildCodexLbRouteQuickPickItems(settings, currentMode, currentUpstreamM
   const upstreams = lbStatusLastPayload && typeof lbStatusLastPayload === "object"
     ? lbStatusLastPayload.upstreams || {}
     : {};
+  const routeState = getCodexLbRouteState(settings);
   const headroomSelected = currentMode === "headroom";
   const directPrimarySelected = currentMode === "direct" && currentUpstreamMode === "primary";
   const directAutoSelected = currentMode === "direct" && currentUpstreamMode === "auto";
@@ -1549,25 +2013,25 @@ function buildCodexLbRouteQuickPickItems(settings, currentMode, currentUpstreamM
     {
       label: "$(rocket) Headroom Gateway",
       description: headroomSelected ? "current path" : "VM215 compression pilot",
-      detail: formatCodexLbRoutePickDetail("headroom", upstreams.headroom, settings.codexLbHeadroomBaseUrl),
+      detail: formatCodexLbRoutePickDetail("headroom", upstreams.headroom, routeState.headroomBaseUrl),
       mode: "headroom"
     },
     {
       label: "$(server) Direct .246 Primary",
       description: directPrimarySelected ? "current path" : "direct VM214 primary",
-      detail: `direct -> primary only (${formatCodexLbRoutePickDetail("primary", upstreams.primary, settings.codexLbPrimaryBaseUrl)})`,
+      detail: `direct -> primary only (${formatCodexLbRoutePickDetail("primary", upstreams.primary, routeState.primaryBaseUrl)})`,
       mode: "primary-direct"
     },
     {
       label: "$(split-horizontal) Direct Auto Failover",
       description: directAutoSelected ? "current path" : ".246 then .234",
-      detail: `direct -> primary then fallback (${settings.codexLbPrimaryBaseUrl} -> ${settings.codexLbFallbackBaseUrl})`,
+      detail: `direct -> primary then fallback (${routeState.primaryBaseUrl} -> ${routeState.fallbackBaseUrl})`,
       mode: "auto-direct"
     },
     {
       label: "$(plug) Strict .234 Direct",
       description: strictFallbackSelected ? "current strict route" : "bypass headroom and use only .234",
-      detail: `direct -> fallback only (${settings.codexLbFallbackBaseUrl})`,
+      detail: `direct -> fallback only (${routeState.fallbackBaseUrl})`,
       mode: "fallback-direct"
     },
     {
@@ -1583,6 +2047,22 @@ async function startOpenAiDirectLogin(context, outputChannel, statusBarItem) {
   const { configText, info: current } = await getCurrentProviderInfo();
   const settings = getSettings();
   const codexBinaryPath = resolveCodexCliBinaryPath();
+  if (current.providerId !== "openai" && codexLbRouteShouldOwnProvider(settings)) {
+    const route = formatCodexLbRouteLine(settings);
+    const choice = await vscode.window.showWarningMessage(
+      `This switches Codex away from Codex-LB (${route}) to direct OpenAI/ChatGPT. HR/LB routing will not be used until you select a Codex-LB route again.`,
+      { modal: true },
+      "Switch to OpenAI"
+    );
+    if (choice !== "Switch to OpenAI") {
+      await appendDebugLog(context, outputChannel, "openai-direct-login-cancelled-codex-lb-active", {
+        providerId: current.providerId,
+        route
+      });
+      return;
+    }
+  }
+  openAiDirectLoginAllowedUntilMs = Date.now() + 10 * 60 * 1000;
   const terminal = vscode.window.createTerminal({
     name: "Codex OpenAI Login"
   });
@@ -1825,24 +2305,34 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
     && Boolean(workspaceProjectPath)
     && !vscode.window.activeTextEditor
     && vscode.window.visibleTextEditors.length === 0;
-  const shouldOpenSidebar = Boolean(shouldOpen) && settings.autoOpenCodexSidebar;
+  const activationLayoutEligible = !shouldOpen
+    && settings.autoOpenCodexSidebar
+    && looksLikeRemoteSessionAlias(workspaceAlias)
+    && Boolean(workspaceProjectPath);
+  const shouldOpenSidebar = settings.autoOpenCodexSidebar
+    && (Boolean(shouldOpen) || blankWindowFallbackEligible || activationLayoutEligible);
 
   if (!shouldOpenSidebar) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-skip", {
       workspaceAlias: workspaceAlias || null,
       blankWindowFallbackEligible,
+      activationLayoutEligible,
       workspaceProjectPath: workspaceProjectPath || null
     });
     return;
   }
 
-  await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
+  if (shouldOpen) {
+    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
+  }
   const debugPayload = {
     detectedCurrentAlias: detectCurrentSshAlias(),
     remoteName: String(vscode.env.remoteName || ""),
     workspaceAlias: workspaceAlias || null,
     workspaceProjectPath: workspaceProjectPath || null,
-    openedBecauseBlankWindow: false,
+    openedBecauseRestartFlag: Boolean(shouldOpen),
+    openedBecauseBlankWindow: blankWindowFallbackEligible,
+    openedBecauseActivationLayout: activationLayoutEligible,
     lastRotationTarget: context.globalState.get(ROTATION_LAST_TARGET_KEY, null),
     lastRotationCurrent: context.globalState.get(ROTATION_LAST_CURRENT_KEY, null),
     lastRotationLogoutAt: context.globalState.get(ROTATION_LAST_LOGOUT_AT_KEY, null)
@@ -1850,7 +2340,7 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
   await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-request", debugPayload);
 
   let sidebarOpenState = "idle";
-  for (const delayMs of [0, 1200, 4000]) {
+  for (const delayMs of CODEX_LAYOUT_SETTLE_DELAYS_MS) {
     await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-scheduled", {
       ...debugPayload,
       delayMs
@@ -1865,6 +2355,9 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
           await appendDebugLog(context, outputChannel, "post-restart-sidebar-open-attempt", {
             ...debugPayload,
             delayMs
+          });
+          await prepareCodexOnlyLayout(context, outputChannel, "post-restart-sidebar-open", {
+            keepAuxiliaryBar: true
           });
           const opened = await openCodexSidebarBestEffort(context, outputChannel);
           if (!opened) {
@@ -1885,6 +2378,58 @@ async function maybeOpenSidebarAfterRestart(context, outputChannel) {
         }
       })();
     }, delayMs);
+  }
+}
+
+async function prepareCodexOnlyLayout(context, outputChannel, reason, options = {}) {
+  const dirtyDocuments = vscode.workspace.textDocuments.filter((document) =>
+    document && document.isDirty && document.uri && document.uri.scheme !== "output"
+  );
+
+  if (dirtyDocuments.length === 0) {
+    try {
+      await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+      await appendDebugLog(context, outputChannel, "codex-only-layout-close-editors-dispatched", {
+        reason
+      });
+    } catch (error) {
+      await appendDebugLog(context, outputChannel, "codex-only-layout-close-editors-failed", {
+        reason,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  } else {
+    await appendDebugLog(context, outputChannel, "codex-only-layout-close-editors-skipped-dirty", {
+      reason,
+      dirtyCount: dirtyDocuments.length,
+      dirtyFiles: dirtyDocuments.map((document) => document.uri.toString()).slice(0, 12)
+    });
+  }
+
+  const layoutCommands = options.keepAuxiliaryBar
+    ? ["workbench.action.closePanel"]
+    : ["workbench.action.closePanel", "workbench.action.closeAuxiliaryBar"];
+
+  if (options.keepAuxiliaryBar) {
+    await appendDebugLog(context, outputChannel, "codex-only-layout-close-auxiliary-bar-skipped", {
+      reason
+    });
+  }
+
+  for (const command of layoutCommands) {
+    try {
+      await vscode.commands.executeCommand(command);
+      await appendDebugLog(context, outputChannel, "codex-only-layout-command-dispatched", {
+        reason,
+        command
+      });
+    } catch (error) {
+      await appendDebugLog(context, outputChannel, "codex-only-layout-command-failed", {
+        reason,
+        command,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
 
@@ -1938,7 +2483,15 @@ async function switchToExplorerBeforeWindowLifecycle(context, outputChannel, rea
     });
     return;
   }
-  for (const command of ["workbench.action.closeAuxiliaryBar", "workbench.view.explorer"]) {
+  const commands = [
+    "workbench.action.closeAuxiliaryBar",
+    "workbench.action.closePanel",
+    "workbench.action.closeSidebar",
+    "workbench.view.explorer",
+    "workbench.files.action.focusFilesExplorer",
+    "workbench.action.closeAuxiliaryBar"
+  ];
+  for (const command of commands) {
     try {
       await vscode.commands.executeCommand(command);
       await appendDebugLog(context, outputChannel, "window-lifecycle-view-command-dispatched", {
@@ -1952,6 +2505,7 @@ async function switchToExplorerBeforeWindowLifecycle(context, outputChannel, rea
         message: error instanceof Error ? error.message : String(error)
       });
     }
+    await delay(COMMAND_CHAIN_STEP_DELAY_MS);
   }
 }
 
@@ -2063,6 +2617,21 @@ function execFilePromise(command, args, timeout, options = {}) {
         return;
       }
       resolve({
+        stdout: String(stdout || ""),
+        stderr: String(stderr || "")
+      });
+    });
+  });
+}
+
+function execFileResult(command, args, timeout, options = {}) {
+  return new Promise((resolve) => {
+    execFile(command, args, { timeout, ...options }, (error, stdout, stderr) => {
+      resolve({
+        ok: !error,
+        exitCode: error && typeof error.code === "number" ? error.code : 0,
+        signal: error && error.signal ? String(error.signal) : "",
+        message: error ? String(error.message || "") : "",
         stdout: String(stdout || ""),
         stderr: String(stderr || "")
       });
@@ -2234,7 +2803,7 @@ async function listVsCodeTaskHistoryThreads(dbPath) {
     "select id || char(31) || coalesce(rollout_path, '')",
     "from threads",
     "where source = 'vscode'",
-    "and thread_source = 'user';"
+    "and coalesce(thread_source, 'user') in ('user', 'codex-space');"
   ].join(" ");
   return String((await runSqliteStatement(dbPath, listSql)).stdout || "")
     .split(/\r?\n/)
@@ -2460,6 +3029,537 @@ async function deleteFiles(filePaths) {
   }
 
   return removedPaths;
+}
+
+function isCodexSqliteRepairSidecarName(entryName) {
+  return CODEX_SQLITE_REPAIR_SIDECAR_SUFFIXES.some((suffix) => String(entryName || "").endsWith(suffix));
+}
+
+function isSafeCodexSqliteRepairSidecarPath(candidatePath) {
+  const normalizedPath = path.resolve(String(candidatePath || ""));
+  const parentDir = path.dirname(normalizedPath);
+  const entryName = path.basename(normalizedPath);
+  return parentDir === CODEX_STATE_ROOT_DIR && isCodexSqliteRepairSidecarName(entryName);
+}
+
+function formatCodexSqliteRepairTimestamp(date = new Date()) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function trimCodexSqliteRepairText(text, maxChars = 1200) {
+  const normalized = String(text || "").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+async function collectCodexSqliteSidecarDirectories() {
+  let entries = [];
+  try {
+    entries = await fs.readdir(CODEX_STATE_ROOT_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return [];
+    }
+    throw error;
+  }
+
+  return entries
+    .filter((entry) => entry && typeof entry.isDirectory === "function" && entry.isDirectory())
+    .map((entry) => String(entry.name || "").trim())
+    .filter(isCodexSqliteRepairSidecarName)
+    .map((entryName) => path.join(CODEX_STATE_ROOT_DIR, entryName));
+}
+
+async function reserveCodexSqliteRepairBackupDir() {
+  const backupsRoot = path.join(CODEX_STATE_ROOT_DIR, "db-backups");
+  await fs.mkdir(backupsRoot, { recursive: true });
+  const baseName = `root-owned-wal-shm-dirs-${formatCodexSqliteRepairTimestamp()}`;
+  for (let index = 0; index < 20; index += 1) {
+    const backupDir = path.join(backupsRoot, index === 0 ? baseName : `${baseName}-${index}`);
+    try {
+      await fs.mkdir(backupDir, { recursive: false });
+      return backupDir;
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error(`Could not reserve a unique backup directory under ${backupsRoot}.`);
+}
+
+async function moveCodexSqliteSidecarDirectories(sidecarDirs) {
+  const uniqueDirs = Array.from(new Set(
+    Array.isArray(sidecarDirs)
+      ? sidecarDirs.map((value) => String(value || "").trim()).filter(Boolean)
+      : []
+  ));
+  if (uniqueDirs.length <= 0) {
+    return {
+      backupDir: "",
+      moved: []
+    };
+  }
+
+  const backupDir = await reserveCodexSqliteRepairBackupDir();
+  const moved = [];
+  for (const sourcePath of uniqueDirs) {
+    if (!isSafeCodexSqliteRepairSidecarPath(sourcePath)) {
+      throw new Error(`Refusing to move unexpected SQLite sidecar path: ${sourcePath}`);
+    }
+    const targetPath = path.join(backupDir, path.basename(sourcePath));
+    let movedWith = "rename";
+    try {
+      await fs.rename(sourcePath, targetPath);
+    } catch (error) {
+      const code = error && error.code ? String(error.code) : "";
+      if (code !== "EACCES" && code !== "EPERM") {
+        throw error;
+      }
+      const result = await execFileResult("sudo", ["-n", "mv", "--", sourcePath, targetPath], DEFAULT_SQLITE_TIMEOUT_MS);
+      if (!result.ok) {
+        const detail = trimCodexSqliteRepairText(result.stderr || result.stdout || result.message);
+        throw new Error(`sudo mv failed for ${sourcePath}: ${detail || "unknown error"}`);
+      }
+      movedWith = "sudo-mv";
+    }
+    moved.push({
+      from: sourcePath,
+      to: targetPath,
+      movedWith
+    });
+  }
+
+  return {
+    backupDir,
+    moved
+  };
+}
+
+function getCurrentUidGidForCodexRepair() {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    throw new Error("Codex state repair requires a POSIX runtime with uid/gid support.");
+  }
+  return {
+    uid: process.getuid(),
+    gid: process.getgid()
+  };
+}
+
+function formatCodexRepairMode(mode) {
+  return `0${((Number(mode) || 0) & 0o7777).toString(8)}`;
+}
+
+function isPathInsideDirectory(candidatePath, rootDir) {
+  const relativePath = path.relative(path.resolve(rootDir), path.resolve(candidatePath));
+  return Boolean(relativePath) && !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+}
+
+function isSafeCodexThreadRecorderRepairPath(candidatePath) {
+  const normalizedPath = path.resolve(String(candidatePath || ""));
+  if (normalizedPath === CODEX_SESSION_INDEX_PATH) {
+    return true;
+  }
+  if (normalizedPath === path.resolve(CODEX_SESSIONS_ROOT_DIR)) {
+    return true;
+  }
+  return isPathInsideDirectory(normalizedPath, CODEX_SESSIONS_ROOT_DIR);
+}
+
+function isCodexThreadRecorderRepairFileName(entryName) {
+  return CODEX_THREAD_RECORDER_REPAIR_FILE_PATTERN.test(String(entryName || "").trim());
+}
+
+function shouldRepairCodexThreadRecorderStat(stat, expectedUid, expectedGid) {
+  if (!stat) {
+    return false;
+  }
+  const requiredMode = stat.isDirectory() ? 0o700 : 0o600;
+  return stat.uid !== expectedUid || stat.gid !== expectedGid || (stat.mode & requiredMode) !== requiredMode;
+}
+
+function buildCodexThreadRecorderIssue(entryPath, stat, expectedUid, expectedGid) {
+  const requiredMode = stat.isDirectory() ? 0o700 : 0o600;
+  return {
+    path: entryPath,
+    type: stat.isDirectory() ? "directory" : "file",
+    uid: stat.uid,
+    gid: stat.gid,
+    mode: stat.mode & 0o7777,
+    modeText: formatCodexRepairMode(stat.mode),
+    needsChown: stat.uid !== expectedUid || stat.gid !== expectedGid,
+    needsChmod: (stat.mode & requiredMode) !== requiredMode,
+    targetMode: (stat.mode & 0o7777) | requiredMode,
+    targetModeText: formatCodexRepairMode((stat.mode & 0o7777) | requiredMode)
+  };
+}
+
+async function collectCodexThreadRecorderPermissionIssues() {
+  const { uid, gid } = getCurrentUidGidForCodexRepair();
+  const issues = [];
+
+  async function maybeCollectPath(entryPath, stat) {
+    if (!isSafeCodexThreadRecorderRepairPath(entryPath)) {
+      return;
+    }
+    if (shouldRepairCodexThreadRecorderStat(stat, uid, gid)) {
+      issues.push(buildCodexThreadRecorderIssue(entryPath, stat, uid, gid));
+    }
+  }
+
+  const sessionIndexStat = await statIfExists(CODEX_SESSION_INDEX_PATH);
+  if (sessionIndexStat && sessionIndexStat.isFile()) {
+    await maybeCollectPath(CODEX_SESSION_INDEX_PATH, sessionIndexStat);
+  }
+
+  async function walkDirectory(directoryPath) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return;
+      }
+      throw error;
+    }
+
+    const directoryStat = await statIfExists(directoryPath);
+    if (directoryStat && directoryStat.isDirectory()) {
+      await maybeCollectPath(directoryPath, directoryStat);
+    }
+
+    for (const entry of entries) {
+      const entryName = String(entry && entry.name || "");
+      const entryPath = path.join(directoryPath, entryName);
+      if (entry.isSymbolicLink && entry.isSymbolicLink()) {
+        continue;
+      }
+      if (entry.isDirectory && entry.isDirectory()) {
+        await walkDirectory(entryPath);
+        continue;
+      }
+      if (!(entry.isFile && entry.isFile()) || !isCodexThreadRecorderRepairFileName(entryName)) {
+        continue;
+      }
+      const stat = await statIfExists(entryPath);
+      if (stat && stat.isFile()) {
+        await maybeCollectPath(entryPath, stat);
+      }
+    }
+  }
+
+  await walkDirectory(CODEX_SESSIONS_ROOT_DIR);
+  return issues;
+}
+
+async function writeCodexThreadRecorderRepairManifest(issues) {
+  if (!Array.isArray(issues) || issues.length <= 0) {
+    return "";
+  }
+
+  const backupsRoot = path.join(CODEX_STATE_ROOT_DIR, "db-backups");
+  await fs.mkdir(backupsRoot, { recursive: true });
+  const baseName = `thread-recorder-permission-repair-${formatCodexSqliteRepairTimestamp()}.json`;
+  for (let index = 0; index < 20; index += 1) {
+    const manifestPath = path.join(
+      backupsRoot,
+      index === 0 ? baseName : baseName.replace(/\.json$/, `-${index}.json`)
+    );
+    const manifest = {
+      createdAt: new Date().toISOString(),
+      codexStateRoot: CODEX_STATE_ROOT_DIR,
+      expectedOwner: getCurrentUidGidForCodexRepair(),
+      rollbackNote: "This manifest records ownership/mode before repair. To roll back ownership only, chown/chmod the listed paths back to uid/gid/mode values.",
+      issues: issues.map((issue) => ({
+        path: issue.path,
+        type: issue.type,
+        uid: issue.uid,
+        gid: issue.gid,
+        mode: issue.mode,
+        modeText: issue.modeText
+      }))
+    };
+    try {
+      await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+      return manifestPath;
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error(`Could not reserve a thread recorder repair manifest under ${backupsRoot}.`);
+}
+
+async function chownCodexRepairPath(targetPath, uid, gid) {
+  try {
+    await fs.chown(targetPath, uid, gid);
+    return "chown";
+  } catch (error) {
+    const code = error && error.code ? String(error.code) : "";
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw error;
+    }
+    const result = await execFileResult(
+      "sudo",
+      ["-n", "chown", `${uid}:${gid}`, "--", targetPath],
+      CODEX_THREAD_RECORDER_REPAIR_TIMEOUT_MS
+    );
+    if (!result.ok) {
+      const detail = trimCodexSqliteRepairText(result.stderr || result.stdout || result.message);
+      throw new Error(`sudo chown failed for ${targetPath}: ${detail || "unknown error"}`);
+    }
+    return "sudo-chown";
+  }
+}
+
+async function chmodCodexRepairPath(targetPath, mode) {
+  try {
+    await fs.chmod(targetPath, mode);
+    return "chmod";
+  } catch (error) {
+    const code = error && error.code ? String(error.code) : "";
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw error;
+    }
+    const result = await execFileResult(
+      "sudo",
+      ["-n", "chmod", formatCodexRepairMode(mode), "--", targetPath],
+      CODEX_THREAD_RECORDER_REPAIR_TIMEOUT_MS
+    );
+    if (!result.ok) {
+      const detail = trimCodexSqliteRepairText(result.stderr || result.stdout || result.message);
+      throw new Error(`sudo chmod failed for ${targetPath}: ${detail || "unknown error"}`);
+    }
+    return "sudo-chmod";
+  }
+}
+
+async function repairCodexThreadRecorderPermissions(issues) {
+  const { uid, gid } = getCurrentUidGidForCodexRepair();
+  const uniqueIssues = Array.from(new Map(
+    (Array.isArray(issues) ? issues : [])
+      .map((issue) => [String(issue && issue.path || ""), issue])
+      .filter(([issuePath]) => Boolean(issuePath))
+  ).values());
+
+  if (uniqueIssues.length <= 0) {
+    return {
+      manifestPath: "",
+      repaired: [],
+      skipped: []
+    };
+  }
+
+  const manifestPath = await writeCodexThreadRecorderRepairManifest(uniqueIssues);
+  const repaired = [];
+  const skipped = [];
+  for (const issue of uniqueIssues) {
+    const targetPath = String(issue.path || "");
+    if (!isSafeCodexThreadRecorderRepairPath(targetPath)) {
+      throw new Error(`Refusing to repair unexpected Codex thread recorder path: ${targetPath}`);
+    }
+    const stat = await statIfExists(targetPath);
+    if (!stat) {
+      skipped.push({
+        path: targetPath,
+        reason: "missing"
+      });
+      continue;
+    }
+
+    const actions = [];
+    if (stat.uid !== uid || stat.gid !== gid) {
+      actions.push(await chownCodexRepairPath(targetPath, uid, gid));
+    }
+    const requiredMode = stat.isDirectory() ? 0o700 : 0o600;
+    const targetMode = (stat.mode & 0o7777) | requiredMode;
+    if ((stat.mode & requiredMode) !== requiredMode) {
+      actions.push(await chmodCodexRepairPath(targetPath, targetMode));
+    }
+    repaired.push({
+      path: targetPath,
+      actions
+    });
+  }
+
+  return {
+    manifestPath,
+    repaired,
+    skipped
+  };
+}
+
+async function runCodexSqliteRepairQuickChecks() {
+  const checks = [];
+  for (const dbName of CODEX_SQLITE_REPAIR_DB_NAMES) {
+    const dbPath = path.join(CODEX_STATE_ROOT_DIR, dbName);
+    const stat = await statIfExists(dbPath);
+    if (!stat || !stat.isFile()) {
+      checks.push({
+        dbPath,
+        ok: false,
+        skipped: true,
+        output: "missing"
+      });
+      continue;
+    }
+
+    const result = await execFileResult("sqlite3", [dbPath, "PRAGMA quick_check;"], DEFAULT_SQLITE_TIMEOUT_MS);
+    checks.push({
+      dbPath,
+      ok: result.ok && String(result.stdout || "").trim() === "ok",
+      skipped: false,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      output: trimCodexSqliteRepairText(result.stdout || result.stderr || result.message)
+    });
+  }
+  return checks;
+}
+
+async function runCodexDoctorForRepair() {
+  let codexBinaryPath = "";
+  try {
+    codexBinaryPath = resolveCodexCliBinaryPath();
+  } catch {
+    codexBinaryPath = "codex";
+  }
+
+  const result = await execFileResult(
+    codexBinaryPath,
+    ["doctor"],
+    CODEX_SQLITE_REPAIR_DOCTOR_TIMEOUT_MS,
+    {
+      env: {
+        ...process.env,
+        TERM: process.env.TERM && process.env.TERM !== "dumb" ? process.env.TERM : "xterm-256color"
+      }
+    }
+  );
+  return {
+    ...result,
+    codexBinaryPath,
+    summary: trimCodexSqliteRepairText(result.stdout || result.stderr || result.message, 2400)
+  };
+}
+
+function summarizeCodexSqliteRepairChecks(checks) {
+  return checks
+    .map((check) => {
+      if (check.skipped) {
+        return `${path.basename(check.dbPath)}: missing`;
+      }
+      return `${path.basename(check.dbPath)}: ${check.ok ? "ok" : `failed (${check.output || "no output"})`}`;
+    })
+    .join("; ");
+}
+
+async function repairCodexSqliteStateCommand(context, outputChannel) {
+  outputChannel.show(true);
+  await appendDebugLog(context, outputChannel, "codex-state-repair-start", {
+    codexStateRoot: CODEX_STATE_ROOT_DIR
+  });
+
+  try {
+    const sidecarDirsBefore = await collectCodexSqliteSidecarDirectories();
+    const moveResult = await moveCodexSqliteSidecarDirectories(sidecarDirsBefore);
+    const sidecarDirsAfter = await collectCodexSqliteSidecarDirectories();
+    const threadRecorderIssuesBefore = await collectCodexThreadRecorderPermissionIssues();
+    const threadRecorderRepair = await repairCodexThreadRecorderPermissions(threadRecorderIssuesBefore);
+    const threadRecorderIssuesAfter = await collectCodexThreadRecorderPermissionIssues();
+    const quickChecks = await runCodexSqliteRepairQuickChecks();
+    const doctor = await runCodexDoctorForRepair();
+    const failedQuickChecks = quickChecks.filter((check) => !check.ok && !check.skipped);
+    const missingQuickChecks = quickChecks.filter((check) => check.skipped);
+    const failed = sidecarDirsAfter.length > 0 || failedQuickChecks.length > 0 || threadRecorderIssuesAfter.length > 0;
+
+    await appendDebugLog(context, outputChannel, "codex-state-repair-complete", {
+      sidecarDirsBefore,
+      movedCount: moveResult.moved.length,
+      backupDir: moveResult.backupDir || null,
+      sidecarDirsAfter,
+      threadRecorderIssuesBefore,
+      threadRecorderRepairedCount: threadRecorderRepair.repaired.length,
+      threadRecorderSkippedCount: threadRecorderRepair.skipped.length,
+      threadRecorderManifestPath: threadRecorderRepair.manifestPath || null,
+      threadRecorderIssuesAfter,
+      quickChecks,
+      doctorOk: doctor.ok,
+      doctorExitCode: doctor.exitCode,
+      doctorSignal: doctor.signal || null,
+      codexBinaryPath: doctor.codexBinaryPath
+    });
+
+    appendOutputChannelLine(outputChannel, "Codex state repair");
+    appendOutputChannelLine(outputChannel, `Moved sidecar directories: ${moveResult.moved.length}`);
+    if (moveResult.backupDir) {
+      appendOutputChannelLine(outputChannel, `Backup directory: ${moveResult.backupDir}`);
+    }
+    appendOutputChannelLine(outputChannel, `Thread recorder permission fixes: ${threadRecorderRepair.repaired.length}`);
+    if (threadRecorderRepair.manifestPath) {
+      appendOutputChannelLine(outputChannel, `Thread recorder manifest: ${threadRecorderRepair.manifestPath}`);
+    }
+    if (threadRecorderRepair.skipped.length > 0) {
+      appendOutputChannelLine(outputChannel, `Thread recorder skipped missing paths: ${threadRecorderRepair.skipped.length}`);
+    }
+    appendOutputChannelLine(outputChannel, `SQLite quick_check: ${summarizeCodexSqliteRepairChecks(quickChecks)}`);
+    appendOutputChannelLine(outputChannel, `Codex doctor: ${doctor.ok ? "ok" : `non-zero exit (${doctor.exitCode || doctor.signal || "unknown"})`}`);
+    if (doctor.summary) {
+      appendOutputChannelLine(outputChannel, doctor.summary);
+    }
+
+    if (failed) {
+      const details = [
+        sidecarDirsAfter.length > 0 ? `${sidecarDirsAfter.length} sidecar directories remain` : "",
+        threadRecorderIssuesAfter.length > 0 ? `${threadRecorderIssuesAfter.length} thread recorder permission issues remain` : "",
+        failedQuickChecks.length > 0 ? `${failedQuickChecks.length} SQLite quick_check failures` : ""
+      ].filter(Boolean).join("; ");
+      void vscode.window.showErrorMessage(`Codex state repair did not finish cleanly: ${details}. See Codex Provider Status Bar output.`);
+      return;
+    }
+
+    const messageParts = [];
+    if (moveResult.moved.length > 0) {
+      messageParts.push(`moved ${moveResult.moved.length} bad sidecar directories`);
+    } else {
+      messageParts.push("no bad sidecar directories found");
+    }
+    if (threadRecorderRepair.repaired.length > 0) {
+      messageParts.push(`fixed ${threadRecorderRepair.repaired.length} thread recorder paths`);
+    } else {
+      messageParts.push("thread recorder permissions already clean");
+    }
+    if (missingQuickChecks.length > 0) {
+      messageParts.push(`${missingQuickChecks.length} DB files missing`);
+    }
+    if (!doctor.ok) {
+      messageParts.push("codex doctor still reported notes");
+    }
+
+    const reloadAction = "Reload Window";
+    const showLogAction = "Show Log";
+    const choice = await vscode.window.showInformationMessage(
+      `Codex state repair complete: ${messageParts.join(", ")}.`,
+      reloadAction,
+      showLogAction
+    );
+    if (choice === reloadAction) {
+      await vscode.commands.executeCommand("workbench.action.reloadWindow");
+    } else if (choice === showLogAction) {
+      outputChannel.show(true);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await appendDebugLog(context, outputChannel, "codex-state-repair-failed", {
+      message
+    });
+    void vscode.window.showErrorMessage(`Codex state repair failed: ${message}`);
+  }
 }
 
 async function clearCodexTaskHistoryCommand(context, outputChannel) {
@@ -4306,6 +5406,10 @@ async function refreshCodexLbUsageCommand(context, outputChannel, options = {}) 
     await appendDebugLog(context, outputChannel, "codex-lb-usage-refresh-success", {
       upstream: lbUsageLastUpstream,
       remainingPercent: lbUsageLastPayload.remaining_percent,
+      allAccountsRemainingPercent: getCodexLbAllAccountsRemainingPercent(lbUsageLastPayload),
+      activeAccountsRemainingPercent: getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload),
+      allAccountsCount: lbUsageLastPayload.all_accounts_count ?? null,
+      activeAccountsCount: lbUsageLastPayload.active_accounts_count ?? null,
       source: lbUsageLastPayload.source || null
     });
 
@@ -4511,12 +5615,12 @@ async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem =
     lbStatusLastError = "";
     lbUsageLastUpstream = "";
     updateCodexLbUsageStatusItem();
-    await refreshCodexLbModelsCommand(context, outputChannel, { silent: true, force: true });
-    await refreshCodexLbUsageCommand(context, outputChannel, { silent: true, force: true });
     await appendDebugLog(context, outputChannel, "codex-lb-route-selected", {
       mode: picked.mode,
       route: formatCodexLbRouteLine(settings)
     });
+    void refreshCodexLbModelsCommand(context, outputChannel, { silent: true, force: true });
+    void refreshCodexLbUsageCommand(context, outputChannel, { silent: true, force: true });
 
     if (currentProviderId === "openai") {
       const providerInfo = await getCurrentProviderInfo();
@@ -4528,6 +5632,7 @@ async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem =
         await writeConfigText(DEFAULTS.configPath, nextText);
       }
       pendingOpenAiDirectLogin = null;
+      openAiDirectLoginAllowedUntilMs = 0;
       await appendDebugLog(context, outputChannel, "codex-lb-route-provider-restored", {
         mode: picked.mode,
         previousProviderId: currentProviderId,
@@ -4549,7 +5654,7 @@ async function selectCodexLbRouteCommand(context, outputChannel, statusBarItem =
     }
 
     const choice = await vscode.window.showInformationMessage(
-      `Codex LB route selected: ${formatCodexLbRoutePickMessageLabel(picked)}. ${formatCodexLbRouteLine(settings)}`,
+      `Codex LB route selected: ${formatCodexLbRoutePickMessageLabel(picked)}. ${formatCodexLbRouteLine(settings)}. Refreshing usage/models in the background.`,
       "Show Status",
       "Open Dashboard"
     );
@@ -4760,6 +5865,9 @@ function resolveRemoteSeriesSettings(settings, currentAliasOverride = "") {
     maxIndex = (fallbackParsed && fallbackParsed.index) || (defaultParsed && defaultParsed.index) || DEFAULT_REMOTE_SESSION_MAX_INDEX;
   }
   maxIndex = Math.min(DEFAULT_REMOTE_SESSION_MAX_INDEX, Math.max(1, Math.floor(maxIndex)));
+  if (prefix.toLowerCase() === DEFAULT_REMOTE_SESSION_ALIAS.toLowerCase()) {
+    maxIndex = DEFAULT_REMOTE_SESSION_MAX_INDEX;
+  }
 
   return {
     currentAlias,
@@ -4824,32 +5932,16 @@ async function selectRemoteSessionAlias(context, outputChannel, settings, nextRe
   const series = resolveRemoteSeriesSettings(settings, currentAlias);
   const aliasCandidates = buildRemoteAliasCandidates(series.prefix, series.maxIndex);
   const suggestedAlias = String((nextRemote && nextRemote.targetAlias) || "").trim();
-  const remotePath = resolveRemoteSessionOpenPath(settings.remoteSessionOpenPath);
 
   const selection = await vscode.window.showQuickPick(
-    aliasCandidates.map((alias) => {
-      const descriptionParts = [];
-      if (alias === suggestedAlias) {
-        descriptionParts.push("suggested");
-      }
-      if (alias === currentAlias) {
-        descriptionParts.push("current window");
-      }
-      return {
-        label: alias,
-        description: descriptionParts.join(" • ") || undefined,
-        detail: `Open ${remotePath}`,
-        alias
-      };
-    }),
+    aliasCandidates.map((alias) => ({
+      label: alias,
+      alias
+    })),
     {
       title: "Open Remote Session",
-      placeHolder: suggestedAlias
-        ? `Select SSH session window to open (suggested: ${suggestedAlias})`
-        : "Select SSH session window to open",
-      ignoreFocusOut: true,
-      matchOnDescription: true,
-      matchOnDetail: true
+      placeHolder: "Select SSH session window to open",
+      ignoreFocusOut: true
     }
   );
 
@@ -5321,11 +6413,13 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
       status: "pending",
       log: false
     });
-    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, settings.autoOpenCodexSidebar);
+    const shouldOpenSidebarAfterNewWindow = false;
+    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, shouldOpenSidebarAfterNewWindow);
     await appendDebugLog(context, outputChannel, "open-next-remote-session-sidebar-armed", {
       traceId,
       targetAlias,
-      shouldOpenSidebar: settings.autoOpenCodexSidebar
+      shouldOpenSidebar: shouldOpenSidebarAfterNewWindow,
+      configuredAutoOpenSidebar: settings.autoOpenCodexSidebar
     });
     await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "open-next-remote-session");
     await appendDebugLog(context, outputChannel, "open-next-remote-session-openfolder-attempt", {
@@ -5401,9 +6495,961 @@ async function openNextRemoteSessionCommand(context, outputChannel) {
   }
 }
 
+async function openLaneCommand(context, outputChannel) {
+  if (openNextRemoteSessionInFlight) {
+    await appendDebugLog(context, outputChannel, "open-lane-ignored", {
+      reason: "in-flight",
+      targetAlias: openNextRemoteSessionInFlight.targetAlias,
+      traceId: openNextRemoteSessionInFlight.traceId
+    });
+    void vscode.window.showInformationMessage(
+      `Already opening ${openNextRemoteSessionInFlight.targetAlias || "lane window"}...`
+    );
+    return;
+  }
+
+  const manifest = await readCoderRoomsLaneManifest();
+  if (!manifest.lanes.length) {
+    await appendDebugLog(context, outputChannel, "open-lane-missing-manifest", {
+      manifestPath: manifest.manifestPath
+    });
+    void vscode.window.showErrorMessage(
+      `Could not load coder rooms lane manifest: ${manifest.manifestPath}`
+    );
+    return;
+  }
+
+  const selection = await vscode.window.showQuickPick(
+    manifest.lanes.map((lane) => ({
+      label: `Lane ${lane.laneId}`,
+      description: `${lane.remoteAlias} • ${lane.role || "worker"} • ${lane.parityStatus || "ready"}`,
+      detail: `${lane.path} • ${lane.expectedBranch || lane.branch || "no branch"}`,
+      lane
+    })),
+    {
+      title: "Codex: Open Lane 01..08",
+      placeHolder: "Select numbered worktree lane to open",
+      ignoreFocusOut: true,
+      matchOnDescription: true,
+      matchOnDetail: true
+    }
+  );
+  if (!selection || !selection.lane) {
+    return;
+  }
+
+  const lane = selection.lane;
+  if (lane.launchBlocked) {
+    await appendDebugLog(context, outputChannel, "open-lane-blocked", {
+      laneId: lane.laneId,
+      remoteAlias: lane.remoteAlias,
+      expectedPath: lane.path,
+      expectedBranch: lane.expectedBranch || null,
+      manifestPath: manifest.manifestPath
+    });
+    void vscode.window.showErrorMessage(
+      `Lane ${lane.laneId} is blocked. Check ${manifest.manifestPath} for path/branch state.`
+    );
+    return;
+  }
+
+  const settings = getSettings();
+  const traceId = `open-lane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const currentAliasResolution = await resolveCurrentRemoteSessionAlias(context, outputChannel);
+  const currentAlias = String(currentAliasResolution && currentAliasResolution.alias || "").trim();
+  const remoteUri = vscode.Uri.parse(
+    `vscode-remote://ssh-remote+${encodeURIComponent(lane.remoteAlias)}${lane.path}`
+  );
+  const reservationSource = `open-attempt:${traceId}`;
+  openNextRemoteSessionInFlight = {
+    traceId,
+    targetAlias: lane.remoteAlias
+  };
+
+  const armedSnapshot = await buildRemoteSessionBootstrapSnapshot(context);
+  await writeRemoteSessionBootstrapTrace(context, {
+    traceId,
+    armedAt: new Date().toISOString(),
+    currentAlias,
+    targetAlias: lane.remoteAlias,
+    remoteAlias: lane.remoteAlias,
+    mode: "lane-manifest",
+    remotePath: lane.path,
+    manifestPath: lane.manifestPath || manifest.manifestPath,
+    laneId: lane.laneId,
+    expectedPath: lane.path,
+    expectedBranch: lane.expectedBranch || lane.branch || "",
+    role: lane.role || null,
+    roomId: lane.roomId || null,
+    parityStatus: lane.parityStatus || null,
+    workspaceAliasStrong: true,
+    armedSnapshot
+  });
+  await appendDebugLog(context, outputChannel, "open-lane-debug-armed", {
+    traceId,
+    currentAlias: currentAlias || null,
+    laneId: lane.laneId,
+    remoteAlias: lane.remoteAlias,
+    remotePath: lane.path,
+    expectedBranch: lane.expectedBranch || lane.branch || null,
+    manifestPath: lane.manifestPath || manifest.manifestPath
+  });
+
+  try {
+    await markRemoteSessionAliasLive(context, outputChannel, lane.remoteAlias, {
+      source: reservationSource,
+      status: "pending",
+      log: false
+    });
+    const shouldOpenSidebarAfterNewWindow = false;
+    await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, shouldOpenSidebarAfterNewWindow);
+    await appendDebugLog(context, outputChannel, "open-lane-sidebar-armed", {
+      traceId,
+      laneId: lane.laneId,
+      remoteAlias: lane.remoteAlias,
+      shouldOpenSidebar: shouldOpenSidebarAfterNewWindow,
+      configuredAutoOpenSidebar: settings.autoOpenCodexSidebar
+    });
+    await switchToExplorerBeforeWindowLifecycle(context, outputChannel, "open-lane");
+    await appendDebugLog(context, outputChannel, "open-lane-openfolder-attempt", {
+      traceId,
+      variant: "options-forceNewWindow",
+      uri: remoteUri.toString()
+    });
+    await vscode.commands.executeCommand("vscode.openFolder", remoteUri, {
+      forceNewWindow: true
+    });
+    const knownRaw = context.globalState.get(REMOTE_SESSION_KNOWN_ALIASES_KEY, []);
+    const knownAliases = new Set(Array.isArray(knownRaw) ? knownRaw.map((value) => String(value || "").trim()).filter(Boolean) : []);
+    if (currentAlias) {
+      knownAliases.add(currentAlias);
+    }
+    knownAliases.add(lane.remoteAlias);
+    await context.globalState.update(REMOTE_SESSION_KNOWN_ALIASES_KEY, Array.from(knownAliases).slice(-32));
+    await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, lane.remoteAlias);
+    await markRemoteSessionAliasLive(context, outputChannel, lane.remoteAlias, {
+      source: "open-success",
+      status: "pending"
+    });
+    await appendDebugLog(context, outputChannel, "open-lane-success", {
+      traceId,
+      laneId: lane.laneId,
+      remoteAlias: lane.remoteAlias,
+      remotePath: lane.path
+    });
+  } catch (firstError) {
+    try {
+      await appendDebugLog(context, outputChannel, "open-lane-openfolder-attempt", {
+        traceId,
+        variant: "boolean-true-fallback",
+        uri: remoteUri.toString(),
+        firstError: firstError instanceof Error ? firstError.message : String(firstError)
+      });
+      await vscode.commands.executeCommand("vscode.openFolder", remoteUri, true);
+      const knownRaw = context.globalState.get(REMOTE_SESSION_KNOWN_ALIASES_KEY, []);
+      const knownAliases = new Set(Array.isArray(knownRaw) ? knownRaw.map((value) => String(value || "").trim()).filter(Boolean) : []);
+      if (currentAlias) {
+        knownAliases.add(currentAlias);
+      }
+      knownAliases.add(lane.remoteAlias);
+      await context.globalState.update(REMOTE_SESSION_KNOWN_ALIASES_KEY, Array.from(knownAliases).slice(-32));
+      await context.globalState.update(REMOTE_SESSION_FALLBACK_LAST_TARGET_KEY, lane.remoteAlias);
+      await markRemoteSessionAliasLive(context, outputChannel, lane.remoteAlias, {
+        source: "open-success",
+        status: "pending"
+      });
+      await appendDebugLog(context, outputChannel, "open-lane-success", {
+        traceId,
+        laneId: lane.laneId,
+        remoteAlias: lane.remoteAlias,
+        remotePath: lane.path,
+        mode: "boolean-true-fallback"
+      });
+    } catch (secondError) {
+      const message = secondError instanceof Error ? secondError.message : String(secondError);
+      await context.globalState.update(OPEN_SIDEBAR_AFTER_RESTART_KEY, false);
+      await clearRemoteSessionAliasReservation(context, lane.remoteAlias, reservationSource);
+      await clearRemoteSessionBootstrapTrace(context);
+      await appendDebugLog(context, outputChannel, "open-lane-failed", {
+        traceId,
+        laneId: lane.laneId,
+        remoteAlias: lane.remoteAlias,
+        remotePath: lane.path,
+        firstError: firstError instanceof Error ? firstError.message : String(firstError),
+        message
+      });
+      void vscode.window.showErrorMessage(
+        `Could not open lane ${lane.laneId} (${lane.remoteAlias}, ${lane.path}): ${message}`
+      );
+    }
+  } finally {
+    openNextRemoteSessionInFlight = null;
+  }
+}
+
+async function listDirectoryNames(directoryPath) {
+  try {
+    return await fs.readdir(directoryPath);
+  } catch {
+    return [];
+  }
+}
+
+function isCleanRestoreStaleExtensionName(name) {
+  return CLEAN_RESTORE_STALE_EXTENSION_PATTERNS.some((pattern) => pattern.test(String(name || "")));
+}
+
+async function restoreOpenAiCodexManifest(openAiExtensionDir, backupRoot) {
+  const packageJsonPath = path.join(openAiExtensionDir, "package.json");
+  const existingManifest = await readJsonIfExists(packageJsonPath);
+  if (!existingManifest) {
+    return {
+      restored: false,
+      reason: "missing-openai-package-json"
+    };
+  }
+
+  await copyPathToBackup(packageJsonPath, backupRoot);
+  const artifactNames = (await listDirectoryNames(openAiExtensionDir))
+    .filter((name) => /\.bak/i.test(name) || /patch/i.test(name) || /\.orig$/i.test(name));
+  const backupPackageName = artifactNames.find((name) => /^package\.json\.bak/i.test(name));
+  const backupManifest = backupPackageName
+    ? await readJsonIfExists(path.join(openAiExtensionDir, backupPackageName))
+    : null;
+  const normalizedManifest = normalizeOpenAiCodexManifest(backupManifest || existingManifest);
+  await writeJsonFile(packageJsonPath, normalizedManifest);
+
+  const movedArtifacts = [];
+  for (const artifactName of artifactNames) {
+    const movedTo = await movePathToBackup(path.join(openAiExtensionDir, artifactName), backupRoot);
+    if (movedTo) {
+      movedArtifacts.push(movedTo);
+    }
+  }
+
+  return {
+    restored: true,
+    usedBackupPackage: Boolean(backupManifest),
+    movedArtifactCount: movedArtifacts.length
+  };
+}
+
+async function ensureCustomExtensionFolder(context, customExtensionDir, backupRoot) {
+  const existingTarget = await statIfExists(customExtensionDir);
+  if (existingTarget) {
+    return {
+      ensured: true,
+      source: "existing-target"
+    };
+  }
+
+  const extensionSource = context && context.extensionPath ? context.extensionPath : "";
+  const sourceStat = extensionSource ? await statIfExists(extensionSource) : null;
+  if (!sourceStat || !sourceStat.isDirectory()) {
+    return {
+      ensured: false,
+      source: null
+    };
+  }
+
+  const comparableSource = normalizeComparableFsPath(extensionSource);
+  const comparableTarget = normalizeComparableFsPath(customExtensionDir);
+  if (comparableSource === comparableTarget) {
+    return {
+      ensured: true,
+      source: "current-target"
+    };
+  }
+
+  await copyPathToBackup(extensionSource, backupRoot);
+  await fs.mkdir(path.dirname(customExtensionDir), { recursive: true });
+  await fs.cp(extensionSource, customExtensionDir, { recursive: true, force: true });
+  return {
+    ensured: true,
+    source: extensionSource
+  };
+}
+
+async function cleanRestoreSettingsFile(filePath, backupRoot) {
+  const payload = await readJsonIfExists(filePath);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      changed: false,
+      reason: "missing-or-invalid"
+    };
+  }
+
+  const cleaned = cleanRestoreSensitiveSettings(payload);
+  if (JSON.stringify(cleaned) === JSON.stringify(payload)) {
+    return {
+      changed: false,
+      reason: "already-clean"
+    };
+  }
+
+  await copyPathToBackup(filePath, backupRoot);
+  await writeJsonFile(filePath, cleaned);
+  return {
+    changed: true
+  };
+}
+
+async function moveCustomWorkspaceStorage(workspaceStorageRoot, backupRoot) {
+  const workspaceIds = await listDirectoryNames(workspaceStorageRoot);
+  let movedCount = 0;
+  for (const workspaceId of workspaceIds) {
+    const movedTo = await movePathToBackup(
+      path.join(workspaceStorageRoot, workspaceId, "oll4com.codex-session-tools"),
+      backupRoot
+    );
+    if (movedTo) {
+      movedCount += 1;
+    }
+  }
+  return movedCount;
+}
+
+function isSafeVsCodeServerLogsPath(candidatePath, vscodeServerDir) {
+  return normalizeComparableFsPath(candidatePath) === normalizeComparableFsPath(
+    path.join(vscodeServerDir, VSCODE_SERVER_LOGS_RELATIVE_PATH)
+  );
+}
+
+async function collectPathStats(targetPath) {
+  const stat = await statIfExists(targetPath);
+  if (!stat) {
+    return {
+      exists: false,
+      files: 0,
+      directories: 0,
+      bytes: 0
+    };
+  }
+  if (stat.isFile()) {
+    return {
+      exists: true,
+      files: 1,
+      directories: 0,
+      bytes: stat.size
+    };
+  }
+  if (!stat.isDirectory()) {
+    return {
+      exists: true,
+      files: 0,
+      directories: 0,
+      bytes: 0
+    };
+  }
+
+  const totals = {
+    exists: true,
+    files: 0,
+    directories: 1,
+    bytes: 0
+  };
+
+  async function walk(directoryPath) {
+    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        totals.directories += 1;
+        await walk(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const entryStat = await statIfExists(entryPath);
+      totals.files += 1;
+      totals.bytes += entryStat ? entryStat.size : 0;
+    }
+  }
+
+  await walk(targetPath);
+  return totals;
+}
+
+async function clearVsCodeServerLogFilesInPlace(logsRoot) {
+  const result = {
+    truncatedFiles: 0,
+    skippedSpecialFiles: 0,
+    errors: []
+  };
+
+  async function walk(directoryPath) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return;
+      }
+      throw error;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        await walk(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        result.skippedSpecialFiles += 1;
+        continue;
+      }
+
+      try {
+        await fs.truncate(entryPath, 0);
+        result.truncatedFiles += 1;
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          continue;
+        }
+        result.errors.push({
+          path: entryPath,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+
+  await walk(logsRoot);
+  if (result.errors.length > 0) {
+    const firstError = result.errors[0];
+    throw new Error(`Failed to truncate ${result.errors.length} VS Code log file(s); first error at ${firstError.path}: ${firstError.message}`);
+  }
+
+  return result;
+}
+
+function formatByteCount(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function parseLocalProcessTable(stdout) {
+  return String(stdout || "")
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (!match) {
+        return null;
+      }
+      return {
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        stat: match[3],
+        ageSeconds: Number(match[4]),
+        command: match[5]
+      };
+    })
+    .filter((entry) => entry && Number.isFinite(entry.pid) && Number.isFinite(entry.ppid));
+}
+
+async function readLocalProcessTable() {
+  const { stdout } = await execFilePromise(
+    "ps",
+    ["-eo", "pid=,ppid=,stat=,etimes=,args="],
+    STALE_CODEX_PROCESS_SCAN_TIMEOUT_MS
+  );
+  return parseLocalProcessTable(stdout);
+}
+
+function isOpenAiCodexAppServerCommand(command) {
+  const text = String(command || "");
+  return text.includes("/openai.chatgpt-") && text.includes("/codex app-server");
+}
+
+function isVsCodeExtensionHostCommand(command) {
+  return String(command || "").includes("--type=extensionHost");
+}
+
+function isCodexMcpServerCommand(command) {
+  const text = String(command || "");
+  return text.includes("/mcp-servers/olla/server.js")
+    || text.includes("/mcp-servers/capturelab/server.js")
+    || text.includes("chrome_devtools_mcp_stdio_bridge.js");
+}
+
+function buildStaleCodexProcessCleanupPlan(processes, options = {}) {
+  const currentPid = Number(options.currentPid || 0);
+  const byPid = new Map();
+  for (const processInfo of Array.isArray(processes) ? processes : []) {
+    if (!processInfo || !Number.isFinite(Number(processInfo.pid))) {
+      continue;
+    }
+    byPid.set(Number(processInfo.pid), {
+      pid: Number(processInfo.pid),
+      ppid: Number(processInfo.ppid || 0),
+      stat: String(processInfo.stat || ""),
+      ageSeconds: Number(processInfo.ageSeconds || 0),
+      command: String(processInfo.command || processInfo.args || "")
+    });
+  }
+
+  const childrenByParent = new Map();
+  for (const processInfo of byPid.values()) {
+    if (!childrenByParent.has(processInfo.ppid)) {
+      childrenByParent.set(processInfo.ppid, []);
+    }
+    childrenByParent.get(processInfo.ppid).push(processInfo);
+  }
+
+  function descendantsOf(pid) {
+    const directChildren = childrenByParent.get(Number(pid)) || [];
+    const descendants = [];
+    for (const child of directChildren) {
+      descendants.push(child, ...descendantsOf(child.pid));
+    }
+    return descendants;
+  }
+
+  const candidates = [];
+  const skipped = [];
+  const candidatePids = new Set();
+
+  for (const processInfo of byPid.values()) {
+    if (!isOpenAiCodexAppServerCommand(processInfo.command)) {
+      continue;
+    }
+    const descendants = descendantsOf(processInfo.pid);
+    const unsafeChildren = descendants.filter((child) => !isCodexMcpServerCommand(child.command));
+    if (processInfo.pid === currentPid) {
+      skipped.push({ ...processInfo, kind: "openai-codex-app-server", reason: "current-extension-host-process" });
+      continue;
+    }
+    if (unsafeChildren.length > 0) {
+      skipped.push({
+        ...processInfo,
+        kind: "openai-codex-app-server",
+        reason: "active-child-processes",
+        childPids: unsafeChildren.map((child) => child.pid).slice(0, 8)
+      });
+      continue;
+    }
+    const parent = byPid.get(processInfo.ppid);
+    if (parent && isVsCodeExtensionHostCommand(parent.command)) {
+      skipped.push({ ...processInfo, kind: "openai-codex-app-server", reason: "parent-extension-host-alive" });
+      continue;
+    }
+    if (parent && processInfo.ppid !== 1) {
+      skipped.push({ ...processInfo, kind: "openai-codex-app-server", reason: "unexpected-parent-alive" });
+      continue;
+    }
+
+    candidates.push({ ...processInfo, kind: "openai-codex-app-server" });
+    candidatePids.add(processInfo.pid);
+  }
+
+  for (const processInfo of byPid.values()) {
+    if (!isCodexMcpServerCommand(processInfo.command) || candidatePids.has(processInfo.ppid)) {
+      continue;
+    }
+    const descendants = descendantsOf(processInfo.pid);
+    if (descendants.length > 0) {
+      skipped.push({
+        ...processInfo,
+        kind: "codex-mcp-server",
+        reason: "active-child-processes",
+        childPids: descendants.map((child) => child.pid).slice(0, 8)
+      });
+      continue;
+    }
+    const parent = byPid.get(processInfo.ppid);
+    if (parent && isOpenAiCodexAppServerCommand(parent.command)) {
+      skipped.push({ ...processInfo, kind: "codex-mcp-server", reason: "parent-app-server-alive" });
+      continue;
+    }
+    if (parent && processInfo.ppid !== 1) {
+      skipped.push({ ...processInfo, kind: "codex-mcp-server", reason: "unexpected-parent-alive" });
+      continue;
+    }
+
+    candidates.push({ ...processInfo, kind: "codex-mcp-server" });
+    candidatePids.add(processInfo.pid);
+  }
+
+  return {
+    scannedCount: byPid.size,
+    candidates,
+    skipped
+  };
+}
+
+function formatProcessSummary(processInfo) {
+  return `${processInfo.pid} ${processInfo.kind || "process"} ${clipText(processInfo.command, 130)}`;
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function terminateStaleCodexProcess(pid) {
+  const targetPid = Number(pid);
+  if (!Number.isFinite(targetPid) || targetPid <= 1) {
+    return {
+      pid: targetPid,
+      status: "invalid-pid"
+    };
+  }
+  if (!isProcessAlive(targetPid)) {
+    return {
+      pid: targetPid,
+      status: "already-exited"
+    };
+  }
+
+  try {
+    process.kill(targetPid, "SIGTERM");
+  } catch (error) {
+    return {
+      pid: targetPid,
+      status: "term-failed",
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  await delay(STALE_CODEX_PROCESS_TERM_GRACE_MS);
+  if (!isProcessAlive(targetPid)) {
+    return {
+      pid: targetPid,
+      status: "terminated"
+    };
+  }
+
+  try {
+    process.kill(targetPid, "SIGKILL");
+  } catch (error) {
+    return {
+      pid: targetPid,
+      status: "kill-failed",
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  await delay(STALE_CODEX_PROCESS_KILL_GRACE_MS);
+  return {
+    pid: targetPid,
+    status: isProcessAlive(targetPid) ? "still-running" : "killed"
+  };
+}
+
+async function cleanupStaleCodexProcessesCommand(context, outputChannel) {
+  const processes = await readLocalProcessTable();
+  const plan = buildStaleCodexProcessCleanupPlan(processes, {
+    currentPid: process.pid
+  });
+  const skippedActive = plan.skipped.filter((entry) =>
+    entry.reason === "active-child-processes"
+    || entry.reason === "parent-extension-host-alive"
+    || entry.reason === "parent-app-server-alive"
+  );
+
+  await appendDebugLog(context, outputChannel, "cleanup-stale-codex-processes-scan", {
+    scannedCount: plan.scannedCount,
+    candidatePids: plan.candidates.map((entry) => entry.pid),
+    skipped: plan.skipped.map((entry) => ({
+      pid: entry.pid,
+      kind: entry.kind,
+      reason: entry.reason,
+      childPids: entry.childPids || []
+    }))
+  });
+
+  if (plan.candidates.length === 0) {
+    outputChannel.show(true);
+    appendOutputChannelLine(
+      outputChannel,
+      `Cleanup stale Codex processes: no safe stale targets. Skipped ${plan.skipped.length} active/protected process(es).`
+    );
+    void vscode.window.showInformationMessage(
+      `Δεν βρήκα σίγουρα stale Codex processes για kill. Έκανα skip ${skippedActive.length} ενεργά/protected process(es). Δες το log για λεπτομέρειες.`
+    );
+    return;
+  }
+
+  const candidatePreview = plan.candidates.map(formatProcessSummary).slice(0, 8).join("\n");
+  const confirm = await vscode.window.showWarningMessage(
+    `Θα κάνω kill μόνο ${plan.candidates.length} σίγουρα stale/orphan Codex process(es). Θα κάνω skip ${skippedActive.length} ενεργά/protected process(es).\n\nTargets:\n${candidatePreview}\n\nΣυνέχεια;`,
+    { modal: true },
+    "Cleanup Stale"
+  );
+  if (confirm !== "Cleanup Stale") {
+    await appendDebugLog(context, outputChannel, "cleanup-stale-codex-processes-cancelled", {
+      candidatePids: plan.candidates.map((entry) => entry.pid),
+      skippedCount: plan.skipped.length
+    });
+    return;
+  }
+
+  outputChannel.show(true);
+  appendOutputChannelLine(outputChannel, `Cleanup stale Codex processes: killing ${plan.candidates.length} target(s)...`);
+  const results = [];
+  for (const candidate of plan.candidates) {
+    const result = await terminateStaleCodexProcess(candidate.pid);
+    results.push({
+      ...result,
+      kind: candidate.kind
+    });
+    appendOutputChannelLine(outputChannel, `Cleanup stale Codex process ${candidate.pid}: ${result.status}`);
+  }
+
+  await appendDebugLog(context, outputChannel, "cleanup-stale-codex-processes-complete", {
+    results,
+    skippedCount: plan.skipped.length
+  });
+  const killedCount = results.filter((entry) => ["terminated", "killed", "already-exited"].includes(entry.status)).length;
+  void vscode.window.showInformationMessage(
+    `Cleanup complete: ${killedCount}/${results.length} stale process(es) cleaned. Skipped ${plan.skipped.length} active/protected.`
+  );
+}
+
+async function clearVsCodeServerLogsCommand(context, outputChannel) {
+  const homeDir = os.homedir();
+  const vscodeServerDir = path.join(homeDir, ".vscode-server");
+  const logsRoot = path.join(vscodeServerDir, VSCODE_SERVER_LOGS_RELATIVE_PATH);
+  if (!isSafeVsCodeServerLogsPath(logsRoot, vscodeServerDir)) {
+    void vscode.window.showErrorMessage(`Refusing to clear unexpected VS Code logs path: ${logsRoot}`);
+    return;
+  }
+
+  const beforeStats = await collectPathStats(logsRoot);
+  if (!beforeStats.exists) {
+    await appendDebugLog(context, outputChannel, "clear-vscode-logs-missing", {
+      logsRoot
+    });
+    void vscode.window.showInformationMessage("Δεν υπάρχουν VS Code Server logs για καθάρισμα.");
+    return;
+  }
+
+  const confirm = await vscode.window.showWarningMessage(
+    `Θα καθαρίσω τα VS Code Server logs (${beforeStats.files} files, ${formatByteCount(beforeStats.bytes)}) με backup copy πρώτα και in-place truncate, χωρίς να μετακινήσω τον live logs φάκελο. Συνέχεια;`,
+    { modal: true },
+    "Clear VS Code Logs"
+  );
+  if (confirm !== "Clear VS Code Logs") {
+    await appendDebugLog(context, outputChannel, "clear-vscode-logs-cancelled", {
+      logsRoot,
+      beforeStats
+    });
+    return;
+  }
+
+  outputChannel.show(true);
+  appendOutputChannelLine(outputChannel, "Clear VS Code logs: starting...");
+  const backupRoot = path.join(
+    homeDir,
+    "agent-workspace",
+    "backups",
+    `${createRestoreStamp()}-vscode-server-logs-clear`
+  );
+  await fs.mkdir(backupRoot, { recursive: true });
+  await appendDebugLog(context, outputChannel, "clear-vscode-logs-start", {
+    logsRoot,
+    backupRoot,
+    beforeStats
+  });
+
+  const copiedTo = await copyPathToBackup(logsRoot, backupRoot);
+  const clearResult = await clearVsCodeServerLogFilesInPlace(logsRoot);
+  const afterStats = await collectPathStats(logsRoot);
+  await appendDebugLog(context, outputChannel, "clear-vscode-logs-complete", {
+    logsRoot,
+    backupRoot,
+    copiedTo,
+    clearResult,
+    beforeStats,
+    afterStats
+  });
+
+  const summary = `backed up ${beforeStats.files} files (${formatByteCount(beforeStats.bytes)}) and truncated ${clearResult.truncatedFiles} files in place`;
+  appendOutputChannelLine(outputChannel, `Clear VS Code logs: complete (${summary}).`);
+  appendOutputChannelLine(outputChannel, `VS Code logs backup: ${backupRoot}`);
+  const choice = await vscode.window.showInformationMessage(
+    `VS Code logs καθαρίστηκαν: ${summary}. Backup: ${backupRoot}`,
+    { modal: true },
+    "Reload Window",
+    "Show Log"
+  );
+  if (choice === "Reload Window") {
+    await reloadWindowCommand(context, outputChannel);
+  } else if (choice === "Show Log") {
+    outputChannel.show(true);
+  }
+}
+
+async function restoreCleanVsCodeCodexInstallCommand(context, outputChannel) {
+  const confirm = await vscode.window.showWarningMessage(
+    "Θα επαναφέρω το VS Code Stable/Codex στην καθαρή κατάσταση: official OpenAI Codex + Codex Session Tools, καθαρά settings/storage/cache, με backup πρώτα. Συνέχεια;",
+    { modal: true },
+    "Επαναφορά"
+  );
+  if (confirm !== "Επαναφορά") {
+    await appendDebugLog(context, outputChannel, "restore-clean-codex-install-cancelled");
+    return;
+  }
+
+  outputChannel.show(true);
+  appendOutputChannelLine(outputChannel, "Restore clean VS Code/Codex state: starting...");
+
+  const homeDir = os.homedir();
+  const vscodeServerDir = path.join(homeDir, ".vscode-server");
+  const extensionsDir = path.join(vscodeServerDir, "extensions");
+  const openAiExtensionDir = path.join(extensionsDir, CLEAN_STABLE_OPENAI_EXTENSION_REL);
+  const customExtensionDir = path.join(extensionsDir, CLEAN_STABLE_CUSTOM_EXTENSION_REL);
+  const backupRoot = path.join(
+    homeDir,
+    "agent-workspace",
+    "backups",
+    `${createRestoreStamp()}-vscode-codex-clean-restore-button`
+  );
+
+  await fs.mkdir(backupRoot, { recursive: true });
+  await appendDebugLog(context, outputChannel, "restore-clean-codex-install-start", {
+    backupRoot,
+    vscodeServerDir,
+    openAiExtensionDir,
+    customExtensionDir
+  });
+
+  const openAiStat = await statIfExists(openAiExtensionDir);
+  if (!openAiStat || !openAiStat.isDirectory()) {
+    void vscode.window.showErrorMessage(`Δεν βρέθηκε το official Codex extension: ${openAiExtensionDir}`);
+    await appendDebugLog(context, outputChannel, "restore-clean-codex-install-missing-openai", {
+      openAiExtensionDir
+    });
+    return;
+  }
+
+  const movedExtensions = [];
+  for (const extensionName of await listDirectoryNames(extensionsDir)) {
+    if (!isCleanRestoreStaleExtensionName(extensionName)) {
+      continue;
+    }
+    const movedTo = await movePathToBackup(path.join(extensionsDir, extensionName), backupRoot);
+    if (movedTo) {
+      movedExtensions.push(extensionName);
+    }
+  }
+
+  const customEnsureResult = await ensureCustomExtensionFolder(context, customExtensionDir, backupRoot);
+  if (!customEnsureResult.ensured) {
+    void vscode.window.showErrorMessage(`Δεν μπόρεσα να βρω source για το custom extension: ${customExtensionDir}`);
+    await appendDebugLog(context, outputChannel, "restore-clean-codex-install-missing-custom-source", {
+      customExtensionDir,
+      extensionPath: context && context.extensionPath ? context.extensionPath : null
+    });
+    return;
+  }
+
+  const openAiManifestResult = await restoreOpenAiCodexManifest(openAiExtensionDir, backupRoot);
+  await writeJsonFile(
+    path.join(extensionsDir, "extensions.json"),
+    buildCleanStableExtensionProfileEntries(homeDir)
+  );
+  await fs.writeFile(path.join(extensionsDir, ".obsolete"), "{}\n", "utf8");
+
+  const movedCaches = [];
+  for (const relativePath of CLEAN_RESTORE_STALE_CACHE_RELATIVE_PATHS) {
+    const movedTo = await movePathToBackup(path.join(vscodeServerDir, relativePath), backupRoot);
+    if (movedTo) {
+      movedCaches.push(relativePath);
+    }
+  }
+
+  const settingsResults = [];
+  for (const settingsPath of [
+    path.join(vscodeServerDir, "data", "User", "settings.json"),
+    path.join(vscodeServerDir, "data", "Machine", "settings.json"),
+    path.join(homeDir, ".config", "Code", "User", "settings.json")
+  ]) {
+    const result = await cleanRestoreSettingsFile(settingsPath, backupRoot);
+    settingsResults.push({
+      path: settingsPath,
+      ...result
+    });
+  }
+
+  const movedGlobalStorage = await movePathToBackup(
+    path.join(vscodeServerDir, "data", "User", "globalStorage", "oll4com.codex-session-tools"),
+    backupRoot
+  );
+  const movedWorkspaceStorageCount = await moveCustomWorkspaceStorage(
+    path.join(vscodeServerDir, "data", "User", "workspaceStorage"),
+    backupRoot
+  );
+
+  await appendDebugLog(context, outputChannel, "restore-clean-codex-install-complete", {
+    backupRoot,
+    movedExtensions,
+    movedCaches,
+    settingsChangedCount: settingsResults.filter((entry) => entry.changed).length,
+    movedGlobalStorage: Boolean(movedGlobalStorage),
+    movedWorkspaceStorageCount,
+    openAiManifestResult,
+    customEnsureResult
+  });
+
+  const settingsChangedCount = settingsResults.filter((entry) => entry.changed).length;
+  const visibleSummary = [
+    movedExtensions.length > 0 ? `${movedExtensions.length} stale extension dirs moved` : "extension dirs already clean",
+    movedCaches.length > 0 ? `${movedCaches.length} stale caches moved` : "caches already clean",
+    settingsChangedCount > 0 ? `${settingsChangedCount} settings files cleaned` : "settings already clean",
+    movedGlobalStorage ? "custom global storage reset" : "custom global storage already clean",
+    movedWorkspaceStorageCount > 0 ? `${movedWorkspaceStorageCount} workspace storage dirs reset` : "workspace storage already clean",
+    openAiManifestResult && openAiManifestResult.restored ? "OpenAI Codex manifest normalized" : "OpenAI Codex manifest unchanged",
+    customEnsureResult && customEnsureResult.ensured ? "custom extension present" : "custom extension missing"
+  ].join("; ");
+  appendOutputChannelLine(outputChannel, `Restore clean VS Code/Codex state: complete (${visibleSummary}).`);
+  appendOutputChannelLine(outputChannel, `Restore backup: ${backupRoot}`);
+
+  const reloadChoice = await vscode.window.showInformationMessage(
+    `Η επαναφορά ολοκληρώθηκε: ${visibleSummary}. Backup: ${backupRoot}`,
+    { modal: true },
+    "Reload Window",
+    "Show Log"
+  );
+  if (reloadChoice === "Reload Window") {
+    await reloadWindowCommand(context, outputChannel);
+  } else if (reloadChoice === "Show Log") {
+    outputChannel.show(true);
+  }
+}
+
 async function openQuickActions(context, outputChannel, statusBarItem) {
   const selection = await vscode.window.showQuickPick(
     [
+      {
+        id: "restore-clean-codex-install",
+        label: "Restore clean VS Code/Codex state",
+        description: "Return Stable to the known-good OpenAI Codex + Codex Session Tools install."
+      },
+      {
+        id: "clear-vscode-logs",
+        label: "Clear VS Code logs",
+        description: "Copy VS Code Server logs to a timestamped backup and truncate log files in place."
+      },
+      {
+        id: "cleanup-stale-codex-processes",
+        label: "Cleanup stale Codex processes",
+        description: "Kill only orphaned Codex app-server/MCP processes; skip active windows and child jobs."
+      },
       {
         id: "logout-best",
         label: "Logout to best account",
@@ -5440,9 +7486,14 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
         description: "Delete local Codex task history immediately from local Codex state files."
       },
       {
+        id: "repair-codex-sqlite-state",
+        label: "Repair Codex state",
+        description: "Fix root-owned thread recorders, move bad SQLite WAL/SHM directories aside, and run health checks."
+      },
+      {
         id: "reload-window",
         label: "Reload window",
-        description: "Reload VS Code window (compat command: codexProviderStatusbar.reloadWindow)."
+        description: "Reload VS Code window; this stops any active Codex run."
       },
       {
         id: "open-new-window",
@@ -5452,7 +7503,12 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
       {
         id: "open-next-remote-session",
         label: "Open next remote session",
-        description: "Open a new SSH window on the next codex-dev session (fallback: codex-dev5)."
+        description: "Open a new SSH window on the next codex-dev session (fallback: codex-dev7)."
+      },
+      {
+        id: "open-lane",
+        label: "Open lane 01..08",
+        description: "Open a numbered coder room worktree from the shared lane manifest."
       },
       {
         id: "show-codex-lb-status",
@@ -5494,6 +7550,18 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
     return;
   }
 
+  if (selection.id === "restore-clean-codex-install") {
+    await restoreCleanVsCodeCodexInstallCommand(context, outputChannel);
+    return;
+  }
+  if (selection.id === "clear-vscode-logs") {
+    await clearVsCodeServerLogsCommand(context, outputChannel);
+    return;
+  }
+  if (selection.id === "cleanup-stale-codex-processes") {
+    await cleanupStaleCodexProcessesCommand(context, outputChannel);
+    return;
+  }
   if (selection.id === "logout-best") {
     await logoutToBestAccount(context, outputChannel);
     return;
@@ -5522,6 +7590,10 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
     await clearCodexTaskHistoryCommand(context, outputChannel);
     return;
   }
+  if (selection.id === "repair-codex-sqlite-state") {
+    await repairCodexSqliteStateCommand(context, outputChannel);
+    return;
+  }
   if (selection.id === "reload-window") {
     await reloadWindowCommand(context, outputChannel);
     return;
@@ -5532,6 +7604,10 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
   }
   if (selection.id === "open-next-remote-session") {
     await openNextRemoteSessionCommand(context, outputChannel);
+    return;
+  }
+  if (selection.id === "open-lane") {
+    await openLaneCommand(context, outputChannel);
     return;
   }
   if (selection.id === "show-codex-lb-status") {
@@ -5672,6 +7748,54 @@ async function switchProvider(context, outputChannel, statusBarItem) {
   await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
 }
 
+function codexLbRouteShouldOwnProvider(settings) {
+  const routeState = getCodexLbRouteState(settings);
+  return ["headroom", "direct"].includes(String(routeState.routeMode || "").trim());
+}
+
+async function restoreCodexLbProviderForActiveRoute(context, outputChannel, statusBarItem, metricsStatusBarItem, reason) {
+  if (pendingOpenAiDirectLogin || Date.now() < openAiDirectLoginAllowedUntilMs) {
+    return false;
+  }
+  const settings = getSettings();
+  if (!codexLbRouteShouldOwnProvider(settings)) {
+    return false;
+  }
+  const providerInfo = await getCurrentProviderInfo();
+  if (providerInfo.info.providerId !== "openai") {
+    return false;
+  }
+  const nextText = buildUpdatedConfigText(providerInfo.configText, {
+    providerId: "codex-lb"
+  });
+  const nextInfo = detectProviderInfo(nextText);
+  if (nextText !== providerInfo.configText) {
+    await writeConfigText(DEFAULTS.configPath, nextText);
+  }
+  await appendDebugLog(context, outputChannel, "codex-lb-provider-drift-restored", {
+    reason,
+    previousProviderId: providerInfo.info.providerId,
+    nextProviderId: nextInfo.providerId,
+    route: formatCodexLbRouteLine(settings)
+  });
+  await refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+  return true;
+}
+
+async function handleConfigFileChanged(context, outputChannel, statusBarItem, metricsStatusBarItem, eventName) {
+  await appendDebugLog(context, outputChannel, eventName);
+  const restored = await restoreCodexLbProviderForActiveRoute(
+    context,
+    outputChannel,
+    statusBarItem,
+    metricsStatusBarItem,
+    eventName
+  );
+  if (!restored) {
+    await refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+  }
+}
+
 function registerConfigWatchers(context, outputChannel, statusBarItem, metricsStatusBarItem) {
   const configWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(path.dirname(DEFAULTS.configPath), path.basename(DEFAULTS.configPath))
@@ -5683,12 +7807,10 @@ function registerConfigWatchers(context, outputChannel, statusBarItem, metricsSt
     configWatcher,
     authWatcher,
     configWatcher.onDidChange(() => {
-      void appendDebugLog(context, outputChannel, "config-file-changed");
-      void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+      void handleConfigFileChanged(context, outputChannel, statusBarItem, metricsStatusBarItem, "config-file-changed");
     }),
     configWatcher.onDidCreate(() => {
-      void appendDebugLog(context, outputChannel, "config-file-created");
-      void refreshStatusBar(context, outputChannel, statusBarItem, metricsStatusBarItem);
+      void handleConfigFileChanged(context, outputChannel, statusBarItem, metricsStatusBarItem, "config-file-created");
     }),
     configWatcher.onDidDelete(() => {
       void appendDebugLog(context, outputChannel, "config-file-deleted");
@@ -5711,7 +7833,7 @@ function registerConfigWatchers(context, outputChannel, statusBarItem, metricsSt
   );
 }
 
-function activate(context) {
+async function activate(context) {
   const outputChannel = vscode.window.createOutputChannel("Codex Provider Status Bar");
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   const metricsStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, -10000);
@@ -5727,6 +7849,15 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("codexProviderStatusbar.openQuickActions", () =>
       openQuickActions(context, outputChannel, statusBarItem)
+    ),
+    vscode.commands.registerCommand("codexProviderStatusbar.restoreCleanCodexInstall", () =>
+      restoreCleanVsCodeCodexInstallCommand(context, outputChannel)
+    ),
+    vscode.commands.registerCommand("codexProviderStatusbar.clearVsCodeLogs", () =>
+      clearVsCodeServerLogsCommand(context, outputChannel)
+    ),
+    vscode.commands.registerCommand("codexProviderStatusbar.cleanupStaleCodexProcesses", () =>
+      cleanupStaleCodexProcessesCommand(context, outputChannel)
     ),
     vscode.commands.registerCommand("codexProviderStatusbar.pickProvider", () => switchProvider(context, outputChannel, statusBarItem)),
     vscode.commands.registerCommand("codexProviderStatusbar.logoutToBestAccount", () =>
@@ -5793,6 +7924,9 @@ function activate(context) {
     vscode.commands.registerCommand("codexProviderStatusbar.openNextRemoteSession", () =>
       openNextRemoteSessionCommand(context, outputChannel)
     ),
+    vscode.commands.registerCommand("codexProviderStatusbar.openLane", () =>
+      openLaneCommand(context, outputChannel)
+    ),
     vscode.commands.registerCommand("codexProviderStatusbar.openCodexSidebar", async () => {
       const opened = await openCodexSidebarBestEffort(context, outputChannel);
       if (!opened) {
@@ -5801,6 +7935,9 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("codexProviderStatusbar.clearTaskHistory", () =>
       clearCodexTaskHistoryCommand(context, outputChannel)
+    ),
+    vscode.commands.registerCommand("codexProviderStatusbar.repairCodexSqliteState", () =>
+      repairCodexSqliteStateCommand(context, outputChannel)
     ),
     vscode.commands.registerCommand("codexProviderStatusbar.newCodexThread", async () => {
       const opened = await openCodexSidebarBestEffort(context, outputChannel);
@@ -5819,10 +7956,15 @@ function activate(context) {
     })
   );
 
+  await primeRemoteSessionWorkspaceState(context, outputChannel);
   const workspaceAlias = String(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_KEY, "") || "").trim();
   const workspaceAliasStoredSource = normalizeRemoteSessionAliasSource(
     context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_SOURCE_KEY, "")
   );
+  const workspaceAliasStrongStored = Boolean(context.workspaceState.get(REMOTE_SESSION_WORKSPACE_ALIAS_STRONG_KEY, false));
+  const workspaceLaneId = String(context.workspaceState.get(REMOTE_SESSION_LANE_ID_KEY, "") || "").trim();
+  const workspaceLaneExpectedPath = String(context.workspaceState.get(REMOTE_SESSION_LANE_EXPECTED_PATH_KEY, "") || "").trim();
+  const workspaceLaneExpectedBranch = String(context.workspaceState.get(REMOTE_SESSION_LANE_EXPECTED_BRANCH_KEY, "") || "").trim();
   const workspaceAliasEffectiveSource = workspaceAlias
     ? (workspaceAliasStoredSource ? `workspace-state:${workspaceAliasStoredSource}` : "workspace-state")
     : "";
@@ -5833,7 +7975,10 @@ function activate(context) {
     workspaceAlias: workspaceAlias || null,
     workspaceAliasSource: workspaceAliasEffectiveSource || null,
     workspaceAliasStoredSource: workspaceAliasStoredSource || null,
-    workspaceAliasStrong: Boolean(workspaceAlias && isStrongRemoteSessionAliasSource(workspaceAliasEffectiveSource))
+    workspaceAliasStrong: Boolean(workspaceAlias && (workspaceAliasStrongStored || isStrongRemoteSessionAliasSource(workspaceAliasStoredSource))),
+    laneId: workspaceLaneId || null,
+    laneExpectedPath: workspaceLaneExpectedPath || null,
+    laneExpectedBranch: workspaceLaneExpectedBranch || null
   });
   void maybeRunRemoteSessionBootstrapDiagnostics(context, outputChannel);
   void heartbeatRemoteSessionAlias(context, outputChannel, "activate");
@@ -5891,6 +8036,13 @@ module.exports = {
   activate,
   deactivate,
   __test: {
-    buildProviderAwareLbUsageStatusState
+    buildProviderAwareLbUsageStatusState,
+    buildStaleCodexProcessCleanupPlan,
+    buildCleanStableExtensionProfileEntries,
+    clearVsCodeServerLogFilesInPlace,
+    cleanRestoreSensitiveSettings,
+    getCodexLbActiveAccountsRemainingPercent,
+    getCodexLbAllAccountsRemainingPercent,
+    normalizeOpenAiCodexManifest
   }
 };

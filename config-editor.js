@@ -9,6 +9,11 @@ const DEFAULTS = {
   openaiProfileName: "openai",
   openaiModel: "gpt-5.4"
 };
+const CODEX_LB_PROVIDER_ID = "codex-lb";
+
+function isCodexLbProviderId(value) {
+  return String(value || "").trim() === CODEX_LB_PROVIDER_ID;
+}
 
 function normalizeText(text) {
   return (text || "").replace(/\r\n/g, "\n");
@@ -231,6 +236,14 @@ function detectProviderInfo(configText) {
       };
     }
 
+    if (isCodexLbProviderId(topLevelModelProvider)) {
+      return {
+        providerId: CODEX_LB_PROVIDER_ID,
+        profile: "top-level",
+        label: "Codex LB"
+      };
+    }
+
     return {
       providerId: "custom",
       profile: "top-level",
@@ -252,6 +265,14 @@ function detectProviderInfo(configText) {
       providerId: "openai",
       profile,
       label: "OpenAI"
+    };
+  }
+
+  if (isCodexLbProviderId(activeProfile.model_provider)) {
+    return {
+      providerId: CODEX_LB_PROVIDER_ID,
+      profile,
+      label: "Codex LB"
     };
   }
 

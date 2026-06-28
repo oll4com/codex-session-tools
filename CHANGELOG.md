@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.8 - 2026-06-28
+
+- Fixed `Clear VS Code Logs` so it no longer moves the live `.vscode-server/data/logs` directory while VS Code is running.
+- The logs cleanup command now copies logs to a timestamped backup first, then truncates regular log files in place and preserves the directory tree/open file handles.
+- Kept the Auxiliary Bar open during Codex sidebar auto-open to avoid racing the official OpenAI Codex webview startup.
+- Added `Cleanup Stale Codex Processes`, a conservative process cleanup action that only targets orphaned Codex app-server/MCP processes and skips active VS Code windows or app-servers with live child jobs.
+- Updated the clean restore baseline to `oll4com.codex-session-tools@0.2.8`.
+
+## 0.2.7 - 2026-06-28
+
+- Added `Clear VS Code Logs` as a Codex view title icon, command palette action, and Quick Actions item.
+- The logs cleanup command moves `.vscode-server/data/logs` to a timestamped backup under `agent-workspace/backups` and recreates an empty logs directory after confirmation.
+- Updated the clean restore baseline to `oll4com.codex-session-tools@0.2.7`.
+
+## 0.2.6 - 2026-06-28
+
+- Made the clean restore command visibly report progress in the Codex Session Tools output channel.
+- Changed the clean restore completion notification to a modal summary with `Reload Window` and `Show Log` actions, so a successful no-op clean state does not look like nothing happened.
+- Updated the clean restore baseline to `oll4com.codex-session-tools@0.2.6`.
+
+## 0.2.5 - 2026-06-28
+
+- Bumped the extension version so VS Code refreshes command/menu contributions after the clean-restore button install.
+- Put `Restore Clean VS Code/Codex State` first in the Codex view title menu.
+- Kept `Repair Codex State` available from Quick Actions and the command palette, but removed it from the top Codex view overflow menu because it is an emergency state repair rather than a normal workflow action.
+
+## 0.2.4 - 2026-06-27
+
+- Defaulted Codex sidebar auto-open to on for the remote VS Code workflow.
+- Fixed the blank-window fallback so empty remote windows actually reopen the Codex sidebar instead of staying on Explorer.
+- Added startup layout settling that hides other workbench surfaces and closes clean editor tabs before focusing Codex, while preserving dirty editors.
+
 ## 0.2.3 - 2026-06-17
 
 - Added the Codex-LB VS Code route selector helper script to source control and packaged files.
