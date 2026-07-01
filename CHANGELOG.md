@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9 - 2026-07-01
+
+- Added `gpt-5.4` to the Codex LB Speed Control panel after confirming Fast works through the local proxy and Headroom path.
+- Added visible Fast-default state to the Codex LB usage surfaces: the status bar now shows a compact `FxN` suffix when Fast defaults are enabled, and the usage tooltip/details list exactly which models have Fast enabled.
+- Updated the clean restore baseline to `oll4com.codex-session-tools@0.2.9`.
+
 ## 0.2.8 - 2026-06-28
 
 - Fixed `Clear VS Code Logs` so it no longer moves the live `.vscode-server/data/logs` directory while VS Code is running.

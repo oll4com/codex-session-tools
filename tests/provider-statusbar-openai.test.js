@@ -56,6 +56,24 @@ test("shows active-account remaining beside the all-account lb usage", () => {
   );
 });
 
+test("shows a compact fast-default suffix when fast is enabled for models", () => {
+  const state = extension.__test.buildProviderAwareLbUsageStatusState({
+    providerId: "codex-lb",
+    hasPayload: true,
+    remainingPercent: 57.6,
+    activeRemainingPercent: 42,
+    lbLabel: "HR",
+    fastEnabledCount: 2,
+    fastAccessibilitySuffix: ", fast defaults enabled for GPT-5.5, GPT-5.4"
+  });
+
+  assert.equal(state.text, "$(circle-filled) HR 57.6% Act 42% Fx2");
+  assert.equal(
+    state.accessibilityLabel,
+    "Codex HR usage tokens 57.6% all accounts remaining, 42% active accounts remaining, fast defaults enabled for GPT-5.5, GPT-5.4"
+  );
+});
+
 test("extracts all-account and active-account remaining values from the weekly payload", () => {
   const payload = {
     remaining_percent: 22.4,
@@ -110,7 +128,7 @@ test("keeps the auxiliary bar open during Codex sidebar auto-open", () => {
 
 test("defaults Codex sidebar auto-open to enabled in package metadata", () => {
   const pkg = require(path.join(__dirname, "..", "package.json"));
-  assert.equal(pkg.version, "0.2.8");
+  assert.equal(pkg.version, "0.2.9");
   assert.equal(
     pkg.contributes.configuration.properties["codexProviderStatusbar.autoOpenCodexSidebar"].default,
     true
@@ -122,7 +140,7 @@ test("builds a clean Stable extension profile with only OpenAI Codex and Codex S
 
   assert.deepEqual(
     entries.map((entry) => `${entry.identifier.id}@${entry.version}`),
-    ["openai.chatgpt@26.623.42026", "oll4com.codex-session-tools@0.2.8"]
+    ["openai.chatgpt@26.623.42026", "oll4com.codex-session-tools@0.2.9"]
   );
   assert.equal(
     entries[0].relativeLocation,
@@ -130,8 +148,167 @@ test("builds a clean Stable extension profile with only OpenAI Codex and Codex S
   );
   assert.equal(
     entries[1].relativeLocation,
-    "oll4com.codex-session-tools-0.2.8"
+    "oll4com.codex-session-tools-0.2.9"
   );
+});
+
+test("normalizes the persisted Codex LB speed map to supported fast-capable models only", () => {
+  const normalized = extension.__test.normalizeCodexLbSpeedMap({
+    version: 99,
+    updated_at: "2026-06-30T12:00:00Z",
+    models: {
+      "gpt-5.5": "FAST",
+      "gpt-5.4": "fast",
+      "gpt-5.4-mini": "fast",
+      "junk-model": "fast"
+    }
+  });
+
+  assert.deepEqual(normalized, {
+    version: 1,
+    updated_at: "2026-06-30T12:00:00Z",
+    models: {
+      "gpt-5.5": "fast",
+      "gpt-5.4": "fast"
+    }
+  });
+});
+
+test("marks a saved speed change as waiting until a matching request is seen", () => {
+  const state = extension.__test.buildCodexLbSpeedControlViewState({
+    speedMap: {
+      version: 1,
+      updated_at: "2026-06-30T12:05:00Z",
+      models: {
+        "gpt-5.5": "fast"
+      }
+    },
+    modelCatalog: {
+      "gpt-5.5": { display_name: "GPT-5.5" }
+    },
+    routeStatus: {
+      route_mode: "headroom",
+      mode: "primary"
+    },
+    lastRequest: {
+      ok: true,
+      last_request: {
+        model: "gpt-5.5",
+        effective_client_tier: "standard",
+        upstream_tier: null,
+        tier_source: "no_tier",
+        upstream: "headroom",
+        request_path: "/v1/responses",
+        timestamp: "2026-06-30T12:01:00Z"
+      }
+    }
+  });
+
+  const row = state.models.find((entry) => entry.id === "gpt-5.5");
+  assert.equal(row.configuredTier, "fast");
+  assert.equal(row.waitingForNextRequest, true);
+  assert.equal(row.statusLabel, "Saved; waiting for next request");
+  assert.equal(state.models.some((entry) => entry.id === "gpt-5.4"), true);
+  assert.match(state.note, /GPT-5\.5 and GPT-5\.4/);
+});
+
+test("shows the live effective tier and route after a matching request arrives", () => {
+  const state = extension.__test.buildCodexLbSpeedControlViewState({
+    speedMap: {
+      version: 1,
+      updated_at: "2026-06-30T12:00:00Z",
+      models: {
+        "gpt-5.5": "fast"
+      }
+    },
+    modelCatalog: {
+      "gpt-5.5": { display_name: "GPT-5.5" }
+    },
+    routeStatus: {
+      route_mode: "headroom",
+      mode: "primary"
+    },
+    lastRequest: {
+      ok: true,
+      last_request: {
+        model: "gpt-5.5",
+        effective_client_tier: "fast",
+        upstream_tier: "priority",
+        tier_source: "proxy_default_fast",
+        upstream: "headroom",
+        request_path: "/v1/responses",
+        timestamp: "2026-06-30T12:03:00Z"
+      }
+    }
+  });
+
+  const row = state.models.find((entry) => entry.id === "gpt-5.5");
+  assert.equal(row.waitingForNextRequest, false);
+  assert.equal(row.effectiveTier, "fast");
+  assert.equal(row.tierSource, "proxy_default_fast");
+  assert.equal(row.upstream, "headroom");
+  assert.match(row.statusLabel, /Fast/);
+  assert.match(row.statusLabel, /headroom/);
+});
+
+test("includes GPT-5.4 in the speed control model list", () => {
+  const state = extension.__test.buildCodexLbSpeedControlViewState({
+    speedMap: {
+      version: 1,
+      updated_at: "2026-06-30T12:00:00Z",
+      models: {
+        "gpt-5.5": "standard",
+        "gpt-5.4": "fast"
+      }
+    },
+    modelCatalog: {
+      "gpt-5.5": { display_name: "GPT-5.5" },
+      "gpt-5.4": { display_name: "GPT-5.4" }
+    },
+    routeStatus: {
+      route_mode: "headroom",
+      mode: "auto"
+    },
+    lastRequest: {
+      ok: true,
+      last_request: {
+        model: "gpt-5.4",
+        effective_client_tier: "fast",
+        upstream_tier: "priority",
+        tier_source: "explicit_fast",
+        upstream: "headroom",
+        request_path: "/v1/responses",
+        timestamp: "2026-06-30T12:03:00Z"
+      }
+    }
+  });
+
+  const row = state.models.find((entry) => entry.id === "gpt-5.4");
+  assert.ok(row);
+  assert.equal(row.label, "GPT-5.4");
+  assert.equal(row.configuredTier, "fast");
+  assert.equal(row.effectiveTier, "fast");
+  assert.match(row.statusLabel, /Fast/);
+  assert.match(row.statusLabel, /headroom/);
+});
+
+test("package metadata exposes the Codex LB speed control command", () => {
+  const pkg = require(path.join(__dirname, "..", "package.json"));
+  assert.equal(
+    pkg.activationEvents.includes("onCommand:codexProviderStatusbar.openCodexLbSpeedControl"),
+    true
+  );
+  assert.equal(
+    pkg.contributes.commands.some((entry) => entry.command === "codexProviderStatusbar.openCodexLbSpeedControl"),
+    true
+  );
+});
+
+test("quick actions and LB dialogs wire the new speed control entrypoint", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "extension.js"), "utf8");
+  assert.match(source, /id:\s*"open-codex-lb-speed-control"/);
+  assert.match(source, /codexProviderStatusbar\.openCodexLbSpeedControl/);
+  assert.match(source, /"Speed Control"/);
 });
 
 test("restore clean install command reports visible progress and modal completion", () => {

@@ -2,7 +2,7 @@
   "name": "codex-session-tools",
   "displayName": "Codex Session Tools",
   "description": "VS Code extension for Codex and Kilo workflows, account rotation, and Codex LB routing helpers.",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "publisher": "oll4com",
   "license": "MIT",
   "repository": {
@@ -59,6 +59,7 @@
     "onCommand:codexProviderStatusbar.showCodexLbUsage",
     "onCommand:codexProviderStatusbar.refreshCodexLbUsage",
     "onCommand:codexProviderStatusbar.refreshCodexLbModels",
+    "onCommand:codexProviderStatusbar.openCodexLbSpeedControl",
     "onCommand:codexProviderStatusbar.selectCodexLbRoute",
     "onCommand:codexProviderStatusbar.openCodexLbDashboard",
     "onCommand:codexProviderStatusbar.lowReasoningAndSaveMemoryPrompt",
@@ -195,6 +196,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "codexProviderStatusbar.openCodexLbSpeedControl",
+        "title": "Codex Session Tools: Open Codex LB Speed Control",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "codexProviderStatusbar.selectCodexLbRoute",
         "title": "Codex Session Tools: Select Codex LB Route",
         "icon": "$(server)"
@@ -298,6 +304,11 @@
 						"group": "navigation@8"
 					},
 					{
+						"command": "codexProviderStatusbar.openCodexLbSpeedControl",
+						"when": "view == kilo-code.SidebarProvider || view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
+						"group": "navigation@8.5"
+					},
+					{
 						"command": "codexProviderStatusbar.clearTaskHistory",
 						"when": "view == chatgpt.sidebarView || view == chatgpt.sidebarSecondaryView",
 						"group": "navigation@9"
@@ -338,6 +349,11 @@
 					"command": "codexProviderStatusbar.selectCodexLbRoute",
 					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
 					"group": "navigation@6"
+				},
+				{
+					"command": "codexProviderStatusbar.openCodexLbSpeedControl",
+					"when": "activeWebviewPanelId == 'kilo-code.new.TabPanel'",
+					"group": "navigation@6.5"
 				}
 			],
       "commandPalette": [
@@ -400,6 +416,9 @@
         },
         {
           "command": "codexProviderStatusbar.refreshCodexLbModels"
+        },
+        {
+          "command": "codexProviderStatusbar.openCodexLbSpeedControl"
         },
         {
           "command": "codexProviderStatusbar.selectCodexLbRoute"

@@ -111,6 +111,8 @@ const DEFAULT_CODEX_LB_ROUTE_STATE_PATH = path.join(os.homedir(), ".config", "co
 const DEFAULT_CODEX_LB_PROVIDER_ENV_PATH = path.join(os.homedir(), ".config", "codex-lb-provider.env");
 const DEFAULT_CODEX_LB_MODEL_CACHE_REFRESHER_PATH = path.join(os.homedir(), "scripts", "codex_lb_refresh_model_cache.js");
 const DEFAULT_CODEX_LB_ROUTE_SELECTOR_PATH = path.join(os.homedir(), ".local", "bin", "codex-lb-vscode-select");
+const DEFAULT_CODEX_LB_SPEED_MAP_PATH = path.join(os.homedir(), ".config", "codex-lb-vscode-speed-map.json");
+const CODEX_LB_MODELS_CACHE_PATH = path.join(os.homedir(), ".codex", "models_cache.json");
 const CODEX_LB_MODEL_CACHE_STATE_PATH = path.join(
   os.homedir(),
   ".local",
@@ -123,13 +125,15 @@ const CODEX_LB_LAST_MODEL_STATE_PATH = path.join(
   "state",
   "codex-lb-last-model.json"
 );
+const CODEX_LB_SPEED_CONTROL_MODEL_IDS = ["gpt-5.5", "gpt-5.4"];
+const CODEX_LB_SPEED_CONTROL_NOTE = "Fast defaults are available for GPT-5.5 and GPT-5.4. Changes apply on the next request.";
 const CODEX_LB_USAGE_REFRESH_INTERVAL_MS = 30 * 1000;
 const CODEX_LB_FETCH_TIMEOUT_MS = 8 * 1000;
 const FORCE_HIDE_PROVIDER_STATUS_BAR_ITEMS = true;
 const CLEAN_STABLE_OPENAI_EXTENSION_REL = "openai.chatgpt-26.623.42026-linux-x64";
-const CLEAN_STABLE_CUSTOM_EXTENSION_REL = "oll4com.codex-session-tools-0.2.8";
+const CLEAN_STABLE_CUSTOM_EXTENSION_REL = "oll4com.codex-session-tools-0.2.9";
 const CLEAN_STABLE_OPENAI_VERSION = "26.623.42026";
-const CLEAN_STABLE_CUSTOM_VERSION = "0.2.8";
+const CLEAN_STABLE_CUSTOM_VERSION = "0.2.9";
 const CLEAN_OPENAI_CODEX_CHAT_SESSIONS = [
   {
     type: "openai-codex",
@@ -176,6 +180,7 @@ let lbStatusLastPayload = null;
 let lbStatusLastError = "";
 let lbModelCacheRefreshInFlight = false;
 let lbModelCacheLastError = "";
+let codexLbSpeedControlPanel = null;
 let pendingOpenAiDirectLogin = null;
 let openAiDirectLoginAllowedUntilMs = 0;
 
@@ -505,6 +510,189 @@ async function readJsonIfExists(filePath) {
   } catch {
     return null;
   }
+}
+
+function readJsonIfExistsSync(filePath) {
+  try {
+    return JSON.parse(fsSync.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCodexLbSpeedChoice(value) {
+  const lowered = String(value || "").trim().toLowerCase();
+  return lowered === "fast" ? "fast" : "standard";
+}
+
+function normalizeCodexLbSpeedMap(rawValue) {
+  const raw = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? rawValue : {};
+  const rawModels = raw.models && typeof raw.models === "object" && !Array.isArray(raw.models)
+    ? raw.models
+    : {};
+  const models = {};
+  for (const modelId of CODEX_LB_SPEED_CONTROL_MODEL_IDS) {
+    models[modelId] = normalizeCodexLbSpeedChoice(rawModels[modelId]);
+  }
+  return {
+    version: 1,
+    updated_at: typeof raw.updated_at === "string" ? raw.updated_at : "",
+    models
+  };
+}
+
+function buildCodexLbSpeedMapDocument(models, updatedAt = new Date().toISOString()) {
+  return {
+    version: 1,
+    updated_at: updatedAt,
+    models: normalizeCodexLbSpeedMap({ models }).models
+  };
+}
+
+function parseIsoDateMs(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function prettifyCodexLbTierLabel(value) {
+  return normalizeCodexLbSpeedChoice(value) === "fast" ? "Fast" : "Standard";
+}
+
+function lastRequestForModel(lastRequest, modelId) {
+  const row = lastRequest && typeof lastRequest === "object" && lastRequest.last_request
+    ? lastRequest.last_request
+    : {};
+  return String(row.model || "").trim() === modelId ? row : null;
+}
+
+function buildCodexLbModelCatalog(rawValue) {
+  const parsed = rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) ? rawValue : {};
+  const fromModels = Array.isArray(parsed.models) ? parsed.models : [];
+  const fromData = Array.isArray(parsed.data) ? parsed.data : [];
+  const catalog = {};
+
+  for (const [modelId, info] of Object.entries(parsed)) {
+    if (!info || typeof info !== "object" || Array.isArray(info)) {
+      continue;
+    }
+    const normalizedId = String(modelId || "").trim();
+    if (!normalizedId) {
+      continue;
+    }
+    const displayName = String(info.display_name || info.displayName || normalizedId).trim() || normalizedId;
+    catalog[normalizedId] = {
+      id: normalizedId,
+      display_name: displayName
+    };
+  }
+
+  for (const model of fromModels) {
+    const modelId = String(model && (model.slug || model.id || model.model) || "").trim();
+    if (!modelId) {
+      continue;
+    }
+    const displayName = String(model.display_name || model.displayName || modelId).trim() || modelId;
+    catalog[modelId] = {
+      id: modelId,
+      display_name: displayName
+    };
+  }
+
+  for (const item of fromData) {
+    const modelId = String(item && item.id || "").trim();
+    const metadata = item && typeof item.metadata === "object" && item.metadata ? item.metadata : {};
+    if (!modelId || catalog[modelId]) {
+      continue;
+    }
+    const displayName = String(metadata.display_name || item.display_name || item.displayName || modelId).trim() || modelId;
+    catalog[modelId] = {
+      id: modelId,
+      display_name: displayName
+    };
+  }
+
+  return catalog;
+}
+
+function buildCodexLbRouteHealthSummary(routeStatus) {
+  const payload = routeStatus && typeof routeStatus === "object" ? routeStatus : {};
+  const route = payload.route && typeof payload.route === "object" ? payload.route : payload;
+  const upstreams = payload.upstreams && typeof payload.upstreams === "object" ? payload.upstreams : {};
+  const activeUpstreams = Array.isArray(payload.active_upstreams) ? payload.active_upstreams : [];
+  const activeNames = activeUpstreams
+    .map((entry) => String(entry && entry.name || "").trim())
+    .filter(Boolean);
+
+  return {
+    routeMode: String(route.route_mode || route.routeMode || "direct").trim() || "direct",
+    mode: String(route.mode || "primary").trim() || "primary",
+    activeLabel: activeNames.length > 0 ? activeNames.join(" -> ") : "pending",
+    upstreams: Object.entries(upstreams).map(([name, info]) => ({
+      name,
+      ok: Boolean(info && info.ok),
+      status: info && typeof info.status === "number" ? info.status : null,
+      elapsedMs: info && typeof info.elapsed_ms === "number" ? info.elapsed_ms : null,
+      baseUrl: String(info && info.base_url || "").trim()
+    }))
+  };
+}
+
+function buildCodexLbSpeedControlViewState({
+  speedMap,
+  modelCatalog,
+  routeStatus,
+  routeError = "",
+  lastRequest
+}) {
+  const normalizedSpeedMap = normalizeCodexLbSpeedMap(speedMap);
+  const catalog = buildCodexLbModelCatalog(modelCatalog);
+  const route = buildCodexLbRouteHealthSummary(routeStatus);
+  const speedUpdatedMs = parseIsoDateMs(normalizedSpeedMap.updated_at);
+
+  const models = CODEX_LB_SPEED_CONTROL_MODEL_IDS.map((modelId) => {
+    const configuredTier = normalizedSpeedMap.models[modelId] || "standard";
+    const lastSeen = lastRequestForModel(lastRequest, modelId);
+    const effectiveTier = lastSeen
+      ? normalizeCodexLbSpeedChoice(lastSeen.effective_client_tier || "standard")
+      : "standard";
+    const lastRequestMs = parseIsoDateMs(lastSeen && lastSeen.timestamp);
+    const waitingForNextRequest = Boolean(
+      configuredTier !== effectiveTier &&
+      (!lastRequestMs || !speedUpdatedMs || speedUpdatedMs >= lastRequestMs)
+    );
+
+    let statusLabel = "No request yet";
+    if (waitingForNextRequest) {
+      statusLabel = "Saved; waiting for next request";
+    } else if (lastSeen) {
+      const upstream = String(lastSeen.upstream || "").trim();
+      statusLabel = upstream
+        ? `${prettifyCodexLbTierLabel(effectiveTier)} via ${upstream}`
+        : prettifyCodexLbTierLabel(effectiveTier);
+    }
+
+    return {
+      id: modelId,
+      label: String(catalog[modelId] && catalog[modelId].display_name || modelId),
+      configuredTier,
+      effectiveTier,
+      tierSource: String(lastSeen && lastSeen.tier_source || "").trim(),
+      upstream: String(lastSeen && lastSeen.upstream || "").trim(),
+      requestPath: String(lastSeen && lastSeen.request_path || "").trim(),
+      lastRequestAt: String(lastSeen && lastSeen.timestamp || "").trim(),
+      reasoningEffort: String(lastSeen && lastSeen.reasoning_effort || "").trim(),
+      waitingForNextRequest,
+      statusLabel
+    };
+  });
+
+  return {
+    updatedAt: normalizedSpeedMap.updated_at,
+    note: CODEX_LB_SPEED_CONTROL_NOTE,
+    route,
+    routeError: String(routeError || "").trim(),
+    models
+  };
 }
 
 function buildCleanStableExtensionProfileEntries(homeDir = os.homedir(), installedTimestamp = Date.now()) {
@@ -1591,6 +1779,88 @@ function formatCodexLbModelCacheSummaryLine() {
   return `${ids.join(", ")}${upstream}${fetched}`;
 }
 
+async function readCodexLbSpeedMap() {
+  return normalizeCodexLbSpeedMap(await readJsonIfExists(DEFAULT_CODEX_LB_SPEED_MAP_PATH));
+}
+
+function readCodexLbSpeedMapSync() {
+  return normalizeCodexLbSpeedMap(readJsonIfExistsSync(DEFAULT_CODEX_LB_SPEED_MAP_PATH));
+}
+
+function formatCodexLbFastDefaultStateSync() {
+  const speedMap = readCodexLbSpeedMapSync();
+  const catalog = buildCodexLbModelCatalog(readJsonIfExistsSync(CODEX_LB_MODELS_CACHE_PATH));
+  const fastModelIds = CODEX_LB_SPEED_CONTROL_MODEL_IDS.filter((modelId) => speedMap.models[modelId] === "fast");
+  const fastModelLabels = fastModelIds.map((modelId) => {
+    const fromCatalog = String(catalog[modelId] && catalog[modelId].display_name || "").trim();
+    return fromCatalog || String(modelId).replace(/^gpt-/, "GPT-");
+  });
+
+  return {
+    count: fastModelIds.length,
+    modelIds: fastModelIds,
+    labels: fastModelLabels,
+    summaryLine: fastModelLabels.length > 0
+      ? `enabled for ${fastModelLabels.join(", ")}`
+      : "disabled",
+    compactSuffix: fastModelLabels.length > 0 ? ` Fx${fastModelLabels.length}` : "",
+    accessibilitySuffix: fastModelLabels.length > 0
+      ? `, fast defaults enabled for ${fastModelLabels.join(", ")}`
+      : ", fast defaults disabled"
+  };
+}
+
+async function writeCodexLbSpeedMap(models) {
+  const payload = buildCodexLbSpeedMapDocument(models);
+  await writeJsonFile(DEFAULT_CODEX_LB_SPEED_MAP_PATH, payload);
+  return payload;
+}
+
+async function readCodexLbLastRequestState() {
+  const parsed = await readJsonIfExists(CODEX_LB_LAST_MODEL_STATE_PATH);
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+async function readCodexLbModelsCacheCatalog() {
+  return buildCodexLbModelCatalog(await readJsonIfExists(CODEX_LB_MODELS_CACHE_PATH));
+}
+
+async function fetchCodexLbRouteStatusState(settings) {
+  try {
+    const response = await fetchJsonResponse(getCodexLbStatusUrl(settings));
+    lbStatusLastPayload = response.json;
+    lbStatusLastError = "";
+    return {
+      payload: response.json,
+      error: ""
+    };
+  } catch (error) {
+    const message = formatCodexLbErrorMessage(error);
+    lbStatusLastError = message;
+    return {
+      payload: lbStatusLastPayload || {},
+      error: message
+    };
+  }
+}
+
+async function loadCodexLbSpeedControlViewState(settings) {
+  const [speedMap, modelCatalog, lastRequest, routeStatus] = await Promise.all([
+    readCodexLbSpeedMap(),
+    readCodexLbModelsCacheCatalog(),
+    readCodexLbLastRequestState(),
+    fetchCodexLbRouteStatusState(settings)
+  ]);
+
+  return buildCodexLbSpeedControlViewState({
+    speedMap,
+    modelCatalog,
+    routeStatus: routeStatus.payload,
+    routeError: routeStatus.error,
+    lastRequest
+  });
+}
+
 function emptyResolvedModelSummary(detail) {
   return {
     label: "",
@@ -1604,22 +1874,31 @@ function emptyResolvedModelSummary(detail) {
 
 function readLastResolvedModelSummary() {
   try {
-    const raw = fsSync.readFileSync(CODEX_LB_LAST_MODEL_STATE_PATH, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = readJsonIfExistsSync(CODEX_LB_LAST_MODEL_STATE_PATH);
+    if (!parsed) {
+      return emptyResolvedModelSummary("pending");
+    }
     if (!parsed.ok) {
       return emptyResolvedModelSummary("unavailable");
     }
     const row = parsed.display_model || {};
+    const lastRequest = parsed.last_request || {};
     const model = String(row.model || "").trim();
     const effort = String(row.reasoning_effort || "").trim();
     if (!model) {
       return emptyResolvedModelSummary("pending");
     }
     const label = effort ? `${model}/${effort}` : model;
+    const tier = normalizeCodexLbSpeedChoice(lastRequest.effective_client_tier || "standard");
+    const upstream = String(lastRequest.upstream || "").trim();
+    const detailParts = [label, prettifyCodexLbTierLabel(tier)];
+    if (upstream) {
+      detailParts.push(`via ${upstream}`);
+    }
     return {
       label,
       scopeLabel: "Model",
-      detail: label,
+      detail: detailParts.join(" "),
       globalDetail: "",
       recentLines: [],
       localMatchLines: []
@@ -1805,6 +2084,7 @@ function buildCodexLbUsageDetailsMessage(settings) {
   const activeRemaining = getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload);
   const totalCount = formatCodexLbInteger(lbUsageLastPayload.all_accounts_count);
   const activeCount = formatCodexLbInteger(lbUsageLastPayload.active_accounts_count);
+  const fastDefaults = formatCodexLbFastDefaultStateSync();
   return [
     `Codex LB usage tokens: ${formatPercent(allRemaining)} all accounts remaining`,
     activeRemaining === null
@@ -1812,6 +2092,7 @@ function buildCodexLbUsageDetailsMessage(settings) {
       : `Active accounts remaining: ${formatPercent(activeRemaining)} (${activeCount} / ${totalCount} active)`,
     `Connected LB: ${describeActiveCodexLb(settings)}`,
     `LB route: ${formatCodexLbRouteLine(settings)}`,
+    `Fast defaults: ${fastDefaults.summaryLine}`,
     `Pooled used: ${formatPercent(lbUsageLastPayload.used_percent)}`,
     `Pooled credits: ${formatCodexLbInteger(lbUsageLastPayload.remaining_credits)} / ${formatCodexLbInteger(lbUsageLastPayload.capacity_credits)} remaining`,
     `Active pooled credits: ${formatCodexLbInteger(lbUsageLastPayload.active_remaining_credits)} / ${formatCodexLbInteger(lbUsageLastPayload.active_capacity_credits)} remaining`,
@@ -1839,12 +2120,14 @@ function buildCodexLbUsageTooltip(settings) {
   const activeRemaining = getCodexLbActiveAccountsRemainingPercent(payload);
   const totalCount = formatCodexLbInteger(payload.all_accounts_count);
   const activeCount = formatCodexLbInteger(payload.active_accounts_count);
+  const fastDefaults = formatCodexLbFastDefaultStateSync();
   const tooltip = new vscode.MarkdownString(undefined, true);
   tooltip.supportHtml = false;
   tooltip.isTrusted = true;
   tooltip.appendMarkdown("**Codex LB usage tokens**\n\n");
   tooltip.appendMarkdown(`Connected LB: **${describeActiveCodexLb(settings)}**\n\n`);
   tooltip.appendMarkdown(`Route: **${formatCodexLbRouteLine(settings)}**\n\n`);
+  tooltip.appendMarkdown(`Fast defaults: **${fastDefaults.summaryLine}**\n\n`);
   tooltip.appendMarkdown(`All accounts remaining: **${formatPercent(allRemaining)}**\n\n`);
   tooltip.appendMarkdown(`Active accounts remaining: **${activeRemaining === null ? "unavailable" : formatPercent(activeRemaining)}** (${activeCount} / ${totalCount} active)\n\n`);
   tooltip.appendMarkdown(`Pooled used: ${formatPercent(payload.used_percent)}\n\n`);
@@ -1912,8 +2195,13 @@ function buildProviderAwareLbUsageStatusState(options) {
   const icon = alertRemaining <= 10 ? "$(error)" : alertRemaining <= 25 ? "$(warning)" : "$(circle-filled)";
   const lbLabel = String(options && options.lbLabel || "LB").trim() || "LB";
   const activeSuffix = activeRemaining === null ? "" : ` Act ${formatPercent(activeRemaining)}`;
+  const fastEnabledCount = Number.isFinite(Number(options && options.fastEnabledCount))
+    ? Number(options.fastEnabledCount)
+    : 0;
+  const fastSuffix = fastEnabledCount > 0 ? ` Fx${Math.max(0, Math.trunc(fastEnabledCount))}` : "";
+  const fastAccessibilitySuffix = String(options && options.fastAccessibilitySuffix || "");
   return {
-    text: `${icon} ${lbLabel} ${formatPercent(remaining)}${activeSuffix}`,
+    text: `${icon} ${lbLabel} ${formatPercent(remaining)}${activeSuffix}${fastSuffix}`,
     tooltip: options && options.tooltip ? options.tooltip : "",
     colorTheme: alertRemaining <= 10
       ? "statusBarItem.errorForeground"
@@ -1926,8 +2214,8 @@ function buildProviderAwareLbUsageStatusState(options) {
         ? "statusBarItem.warningBackground"
         : null,
     accessibilityLabel: activeRemaining === null
-      ? `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining`
-      : `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining, ${formatPercent(activeRemaining)} active accounts remaining`,
+      ? `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining${fastAccessibilitySuffix}`
+      : `Codex ${lbLabel} usage tokens ${formatPercent(remaining)} all accounts remaining, ${formatPercent(activeRemaining)} active accounts remaining${fastAccessibilitySuffix}`,
     command: "codexProviderStatusbar.selectCodexLbRoute"
   };
 }
@@ -1944,6 +2232,7 @@ function updateCodexLbUsageStatusItem() {
   }
 
   const hasPayload = Boolean(lbUsageLastPayload);
+  const fastDefaults = formatCodexLbFastDefaultStateSync();
   const nextState = buildProviderAwareLbUsageStatusState({
     providerId: readCurrentProviderIdForStatusItems(),
     hasPayload,
@@ -1951,7 +2240,9 @@ function updateCodexLbUsageStatusItem() {
     remainingPercent: hasPayload ? getCodexLbAllAccountsRemainingPercent(lbUsageLastPayload) : null,
     activeRemainingPercent: hasPayload ? getCodexLbActiveAccountsRemainingPercent(lbUsageLastPayload) : null,
     lbLabel: hasPayload ? formatActiveCodexLbShortLabel(settings) : "",
-    tooltip: hasPayload ? buildCodexLbUsageTooltip(settings) : null
+    tooltip: hasPayload ? buildCodexLbUsageTooltip(settings) : null,
+    fastEnabledCount: fastDefaults.count,
+    fastAccessibilitySuffix: fastDefaults.accessibilitySuffix
   });
 
   lbUsageStatusBarItem.text = nextState.text;
@@ -5360,6 +5651,472 @@ async function captureScreenToChatCommand(context, outputChannel) {
   );
 }
 
+function getCodexLbSpeedControlHtml(webview, initialState) {
+  const nonce = getWebviewNonce();
+  const cspSource = webview.cspSource;
+  const serializedState = JSON.stringify(initialState).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Codex LB Speed Control</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #121416;
+      --surface: #1a1e21;
+      --surface-2: #20262a;
+      --border: #31383d;
+      --text: #edf1f3;
+      --muted: #9ba5ab;
+      --accent: #69c2a1;
+      --accent-2: #2f6e5b;
+      --warn: #e5b766;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    header {
+      display: grid;
+      gap: 4px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .subtitle {
+      color: var(--muted);
+    }
+    .note {
+      color: var(--warn);
+      font-size: 12px;
+    }
+    .band {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 14px;
+    }
+    .route-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .route-cell {
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .value {
+      margin-top: 4px;
+      font-size: 14px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .health-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .health-row,
+    .model-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 220px) minmax(180px, 240px) minmax(180px, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 12px 0;
+      border-top: 1px solid var(--border);
+    }
+    .health-row:first-child,
+    .model-row:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .health-row:last-child,
+    .model-row:last-child {
+      padding-bottom: 0;
+    }
+    .health-badge,
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+    }
+    .health-badge.ok {
+      border-color: rgba(105, 194, 161, 0.4);
+      color: #d8f6eb;
+    }
+    .health-badge.bad {
+      border-color: rgba(229, 183, 102, 0.4);
+      color: #ffe3b0;
+    }
+    .model-meta,
+    .status-meta {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .segment {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(84px, 1fr));
+      gap: 0;
+      min-height: 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface-2);
+    }
+    .segment input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .segment label {
+      display: grid;
+      place-items: center;
+      padding: 0 10px;
+      min-height: 36px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+      border-left: 1px solid var(--border);
+    }
+    .segment label:first-of-type {
+      border-left: 0;
+    }
+    .segment input:checked + label {
+      background: rgba(105, 194, 161, 0.18);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    button {
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: var(--accent);
+      color: #0f201b;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+    #statusLine {
+      color: var(--muted);
+      min-height: 20px;
+    }
+    .route-error {
+      margin-top: 10px;
+      color: var(--warn);
+    }
+    @media (max-width: 760px) {
+      .health-row,
+      .model-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Codex LB Speed Control</h1>
+      <div class="subtitle">Remote-safe per-model defaults for the local Codex-LB proxy. Changes apply on the next request.</div>
+      <div class="note" id="noteLine"></div>
+    </header>
+
+    <section class="band">
+      <div class="route-grid" id="routeGrid"></div>
+      <div class="health-list" id="healthList"></div>
+      <div class="route-error" id="routeError"></div>
+    </section>
+
+    <section class="band">
+      <div id="models"></div>
+      <div class="actions">
+        <button id="saveButton" type="button">Save defaults</button>
+        <button id="refreshButton" type="button" class="secondary">Refresh status</button>
+        <div id="statusLine"></div>
+      </div>
+    </section>
+  </main>
+
+  <script nonce="${nonce}">
+    const vscode = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : { postMessage() {} };
+    let state = ${serializedState};
+    let pending = false;
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function setPending(nextPending) {
+      pending = Boolean(nextPending);
+      document.getElementById("saveButton").disabled = pending;
+      document.getElementById("refreshButton").disabled = pending;
+    }
+
+    function setStatus(text) {
+      document.getElementById("statusLine").textContent = text || "";
+    }
+
+    function currentSelections() {
+      const models = {};
+      for (const row of state.models || []) {
+        const selected = document.querySelector('input[name="' + row.id + '"]:checked');
+        models[row.id] = selected ? selected.value : row.configuredTier;
+      }
+      return models;
+    }
+
+    function renderRoute(routeState) {
+      const routeGrid = document.getElementById("routeGrid");
+      const healthList = document.getElementById("healthList");
+      const routeError = document.getElementById("routeError");
+      const route = routeState.route || {};
+      const routeCells = [
+        { label: "Route mode", value: route.routeMode || "direct" },
+        { label: "Direct mode", value: route.mode || "primary" },
+        { label: "Active upstreams", value: route.activeLabel || "pending" }
+      ];
+      routeGrid.innerHTML = routeCells.map((cell) => (
+        '<div class="route-cell"><div class="label">' + escapeHtml(cell.label) + '</div><div class="value">' + escapeHtml(cell.value) + '</div></div>'
+      )).join("");
+
+      healthList.innerHTML = (route.upstreams || []).map((entry) => {
+        const badgeClass = entry.ok ? "health-badge ok" : "health-badge bad";
+        const statusBits = [entry.ok ? "healthy" : "degraded"];
+        if (typeof entry.status === "number") {
+          statusBits.push("HTTP " + entry.status);
+        }
+        if (typeof entry.elapsedMs === "number") {
+          statusBits.push(entry.elapsedMs + " ms");
+        }
+        return [
+          '<div class="health-row">',
+            '<div>',
+              '<div>' + escapeHtml(entry.name) + '</div>',
+              '<div class="model-meta">' + escapeHtml(entry.baseUrl || "") + '</div>',
+            '</div>',
+            '<div><span class="' + badgeClass + '">' + escapeHtml(statusBits.join(" • ")) + '</span></div>',
+            '<div class="status-meta"></div>',
+          '</div>'
+        ].join("");
+      }).join("");
+
+      routeError.textContent = routeState.routeError || "";
+    }
+
+    function renderModels(modelRows) {
+      const root = document.getElementById("models");
+      root.innerHTML = (modelRows || []).map((row) => {
+        const standardChecked = row.configuredTier === "standard" ? "checked" : "";
+        const fastChecked = row.configuredTier === "fast" ? "checked" : "";
+        const statusMetaBits = [];
+        if (row.tierSource) {
+          statusMetaBits.push(row.tierSource);
+        }
+        if (row.requestPath) {
+          statusMetaBits.push(row.requestPath);
+        }
+        if (row.reasoningEffort) {
+          statusMetaBits.push("reasoning " + row.reasoningEffort);
+        }
+        if (row.lastRequestAt) {
+          statusMetaBits.push(new Date(row.lastRequestAt).toLocaleString());
+        }
+        return [
+          '<div class="model-row">',
+            '<div>',
+              '<div>' + escapeHtml(row.label) + '</div>',
+              '<div class="model-meta">' + escapeHtml(row.id) + '</div>',
+            '</div>',
+            '<div class="segment">',
+              '<input type="radio" id="' + escapeHtml(row.id + '-standard') + '" name="' + escapeHtml(row.id) + '" value="standard" ' + standardChecked + '>',
+              '<label for="' + escapeHtml(row.id + '-standard') + '">Standard</label>',
+              '<input type="radio" id="' + escapeHtml(row.id + '-fast') + '" name="' + escapeHtml(row.id) + '" value="fast" ' + fastChecked + '>',
+              '<label for="' + escapeHtml(row.id + '-fast') + '">Fast</label>',
+            '</div>',
+            '<div>',
+              '<div class="status-badge">' + escapeHtml(row.statusLabel) + '</div>',
+              '<div class="status-meta">' + escapeHtml(statusMetaBits.join(" • ")) + '</div>',
+            '</div>',
+          '</div>'
+        ].join("");
+      }).join("");
+    }
+
+    function render(nextState) {
+      state = nextState || state;
+      document.getElementById("noteLine").textContent = state.note || "";
+      renderRoute(state);
+      renderModels(state.models || []);
+    }
+
+    document.getElementById("saveButton").addEventListener("click", () => {
+      setPending(true);
+      setStatus("Saving defaults...");
+      vscode.postMessage({
+        type: "save",
+        models: currentSelections()
+      });
+    });
+
+    document.getElementById("refreshButton").addEventListener("click", () => {
+      setPending(true);
+      setStatus("Refreshing status...");
+      vscode.postMessage({ type: "refresh" });
+    });
+
+    window.addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.type === "state") {
+        render(message.state);
+        setPending(false);
+      }
+      if (message.type === "status") {
+        setStatus(message.message || "");
+      }
+    });
+
+    render(state);
+  </script>
+</body>
+</html>`;
+}
+
+async function postCodexLbSpeedControlState(panel, settings, statusMessage = "") {
+  const state = await loadCodexLbSpeedControlViewState(settings);
+  await panel.webview.postMessage({
+    type: "state",
+    state
+  });
+  if (statusMessage) {
+    await panel.webview.postMessage({
+      type: "status",
+      message: statusMessage
+    });
+  }
+}
+
+async function openCodexLbSpeedControlCommand(context, outputChannel) {
+  const settings = getSettings();
+
+  if (codexLbSpeedControlPanel) {
+    codexLbSpeedControlPanel.reveal(vscode.ViewColumn.Active);
+    try {
+      await postCodexLbSpeedControlState(codexLbSpeedControlPanel, settings);
+    } catch (error) {
+      void vscode.window.showWarningMessage(`Codex LB speed control refresh failed: ${formatCodexLbErrorMessage(error)}`);
+    }
+    return;
+  }
+
+  const initialState = await loadCodexLbSpeedControlViewState(settings);
+  const panel = vscode.window.createWebviewPanel(
+    "codexProviderLbSpeedControl",
+    "Codex LB Speed Control",
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true
+    }
+  );
+  codexLbSpeedControlPanel = panel;
+  panel.webview.html = getCodexLbSpeedControlHtml(panel.webview, initialState);
+
+  panel.onDidDispose(() => {
+    if (codexLbSpeedControlPanel === panel) {
+      codexLbSpeedControlPanel = null;
+    }
+  }, null, context.subscriptions);
+
+  panel.webview.onDidReceiveMessage(
+    async (message) => {
+      if (!message || typeof message !== "object") {
+        return;
+      }
+
+      try {
+        if (message.type === "refresh") {
+          await postCodexLbSpeedControlState(panel, settings, "Status refreshed.");
+          return;
+        }
+
+        if (message.type === "save") {
+          const nextMap = normalizeCodexLbSpeedMap({ models: message.models || {} });
+          await writeCodexLbSpeedMap(nextMap.models);
+          await appendDebugLog(context, outputChannel, "codex-lb-speed-control-saved", {
+            models: nextMap.models
+          });
+          await postCodexLbSpeedControlState(panel, settings, "Defaults saved.");
+        }
+      } catch (error) {
+        const detail = formatCodexLbErrorMessage(error);
+        await appendDebugLog(context, outputChannel, "codex-lb-speed-control-error", {
+          messageType: message.type || "unknown",
+          detail
+        });
+        await panel.webview.postMessage({
+          type: "status",
+          message: `Error: ${detail}`
+        });
+        await panel.webview.postMessage({
+          type: "state",
+          state: await loadCodexLbSpeedControlViewState(settings)
+        });
+      }
+    },
+    undefined,
+    context.subscriptions
+  );
+}
+
 async function openCodexLbDashboardCommand(context, outputChannel) {
   const settings = getSettings();
   await appendDebugLog(context, outputChannel, "codex-lb-open-dashboard", {
@@ -5511,6 +6268,7 @@ async function showCodexLbUsageCommand(context, outputChannel) {
     "Refresh now",
     "Select LB",
     "Refresh models",
+    "Speed Control",
     "Open Dashboard"
   );
 
@@ -5520,6 +6278,8 @@ async function showCodexLbUsageCommand(context, outputChannel) {
     await selectCodexLbRouteCommand(context, outputChannel);
   } else if (choice === "Refresh models") {
     await refreshCodexLbModelsCommand(context, outputChannel, { silent: false });
+  } else if (choice === "Speed Control") {
+    await openCodexLbSpeedControlCommand(context, outputChannel);
   } else if (choice === "Open Dashboard") {
     await openCodexLbDashboardCommand(context, outputChannel);
   }
@@ -5547,6 +6307,7 @@ async function showCodexLbStatusCommand(context, outputChannel) {
   const choice = await vscode.window.showInformationMessage(
     message,
     { modal: false },
+    "Speed Control",
     "Open Dashboard",
     "Select LB",
     "Refresh Usage",
@@ -5554,7 +6315,9 @@ async function showCodexLbStatusCommand(context, outputChannel) {
     "Reload Window"
   );
 
-  if (choice === "Open Dashboard") {
+  if (choice === "Speed Control") {
+    await openCodexLbSpeedControlCommand(context, outputChannel);
+  } else if (choice === "Open Dashboard") {
     await openCodexLbDashboardCommand(context, outputChannel);
   } else if (choice === "Select LB") {
     await selectCodexLbRouteCommand(context, outputChannel);
@@ -7526,6 +8289,11 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
         description: "Refresh the cached model list from the active Codex-LB route."
       },
       {
+        id: "open-codex-lb-speed-control",
+        label: "Open Codex LB speed control",
+        description: "Set remote-safe per-model Standard/Fast defaults and inspect the live effective tier."
+      },
+      {
         id: "select-codex-lb-route",
         label: "Select Codex LB route",
         description: "Switch the editor proxy between primary, fallback, or auto failover."
@@ -7620,6 +8388,10 @@ async function openQuickActions(context, outputChannel, statusBarItem) {
   }
   if (selection.id === "refresh-codex-lb-models") {
     await refreshCodexLbModelsCommand(context, outputChannel, { silent: false });
+    return;
+  }
+  if (selection.id === "open-codex-lb-speed-control") {
+    await openCodexLbSpeedControlCommand(context, outputChannel);
     return;
   }
   if (selection.id === "select-codex-lb-route") {
@@ -7909,6 +8681,9 @@ async function activate(context) {
     vscode.commands.registerCommand("codexProviderStatusbar.refreshCodexLbModels", () =>
       refreshCodexLbModelsCommand(context, outputChannel, { silent: false })
     ),
+    vscode.commands.registerCommand("codexProviderStatusbar.openCodexLbSpeedControl", () =>
+      openCodexLbSpeedControlCommand(context, outputChannel)
+    ),
     vscode.commands.registerCommand("codexProviderStatusbar.selectCodexLbRoute", () =>
       selectCodexLbRouteCommand(context, outputChannel, statusBarItem)
     ),
@@ -8039,10 +8814,13 @@ module.exports = {
     buildProviderAwareLbUsageStatusState,
     buildStaleCodexProcessCleanupPlan,
     buildCleanStableExtensionProfileEntries,
+    buildCodexLbSpeedControlViewState,
     clearVsCodeServerLogFilesInPlace,
     cleanRestoreSensitiveSettings,
+    getCodexLbSpeedControlHtml,
     getCodexLbActiveAccountsRemainingPercent,
     getCodexLbAllAccountsRemainingPercent,
+    normalizeCodexLbSpeedMap,
     normalizeOpenAiCodexManifest
   }
 };

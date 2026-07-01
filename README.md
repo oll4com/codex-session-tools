@@ -2,7 +2,7 @@
 
 Public VS Code extension for Codex and Kilo workflows.
 
-![Codex Session Tools overview](media/overview.svg)
+![Codex Session Tools overview](media/overview.png)
 
 ## Overview
 
@@ -59,7 +59,7 @@ The goal is to keep one maintained extension identity for:
 
 ## Release Status
 
-- Current public repo version: `0.2.3`
+- Current public repo version: `0.2.9`
 - License: MIT
 - Changelog: see [CHANGELOG.md](CHANGELOG.md)
 
